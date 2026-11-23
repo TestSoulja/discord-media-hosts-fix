@@ -12,8 +12,9 @@
     1. makes sure your zapret bypass is up AND working: starts a config if
        winws.exe is not running, and if the Discord media hosts still do not
        answer through it, stops that config and tries the next one until one
-       gets through (up to 5 configs). When TCP 443 does not connect to the
-       CDN at all, another config cannot help and the switching is skipped;
+       gets through - every config found in the zapret folder, in a sensible
+       order. When TCP 443 does not connect to the CDN at all, another config
+       cannot help and the switching is skipped;
     2. pins the addresses that actually answer for the Discord media CDN into
        the Windows hosts file, inside a marked block, then restarts Discord.
 
@@ -48,6 +49,8 @@
       -ZapretDir PATH  zapret folder (auto-detected when omitted)
       -Config NAME     use only this config, no automatic switching,
                        e.g. "general (ALT11).bat"
+      -MaxConfigs N    stop the automatic sweep after N configs
+                       (default: try every config in the folder)
       -RestartZapret   restart the bypass even when it already answers
                        (by default a working bypass is left alone)
       -Prompt          show the config menu instead of choosing automatically
@@ -78,6 +81,7 @@ param(
     [switch]$Version,
     [string]$ZapretDir = '',
     [string]$Config = '',
+    [int]$MaxConfigs = 0,
     [string]$HostsFile = (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'),
     [string[]]$Hosts = @(
         'media.discordapp.net',
@@ -88,7 +92,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.5.1'
+$AppVersion = '1.6.0'
 
 $ErrorActionPreference = 'Stop'
 
@@ -770,6 +774,8 @@ $bypassUp     = $false
 $bypassConfig = ''
 $lastStarted  = ''
 $controlState = ''
+$allConfigsTried = $false
+$sweepReported = $false
 
 if ($zapretConfig) {
     $seed = @($preferred | Select-Object -First 4)
@@ -809,9 +815,18 @@ if ($zapretConfig) {
             else {
                 $order = @(Get-ConfigOrder -Configs $configs -Preferred $zapretConfig)
                 # -Config means "use exactly this one": no automatic switching.
-                $limit = [Math]::Min($order.Count, 5)
-                if ($Config) { $limit = [Math]::Min($order.Count, 1) }
+                # Otherwise every config is fair game: the one that gets images
+                # through is remembered, so the full sweep is paid only once.
+                $limit = $order.Count
+                if ($Config) { $limit = 1 }
+                elseif ($MaxConfigs -gt 0) { $limit = [Math]::Min($order.Count, $MaxConfigs) }
 
+                if ($limit -gt 1) {
+                    Write-Step ("Configs to try: {0}. Each check takes up to a minute," -f $limit) 'DarkGray'
+                    Write-Step 'so let it run - the one that works is remembered for next time.' 'DarkGray'
+                }
+
+                $stoppedOnBlackhole = $false
                 for ($i = 0; $i -lt $limit; $i++) {
                     $candidate = $order[$i]
                     Write-Step ''
@@ -834,6 +849,7 @@ if ($zapretConfig) {
                     if ((Get-BlockDiagnosis -Addresses $seed) -eq 'blackhole') {
                         Write-Step 'The Discord CDN does not answer at all here - another config cannot open it.' 'Yellow'
                         Write-Step 'Keeping zapret up for chat and voice.' 'Yellow'
+                        $stoppedOnBlackhole = $true
                         break
                     }
 
@@ -845,6 +861,17 @@ if ($zapretConfig) {
                     elseif ($controlState -eq 'fail') {
                         Write-Step 'Discord does not load through it either - this config is not beating the DPI.' 'Yellow'
                     }
+                }
+
+                if (-not $bypassUp -and -not $stoppedOnBlackhole -and $limit -gt 1) {
+                    if ($limit -eq $order.Count) {
+                        Write-Step ("All {0} configs were tried - none got the images through." -f $limit) 'Yellow'
+                        $allConfigsTried = $true
+                    }
+                    else {
+                        Write-Step ("First {0} configs were tried - none got the images through." -f $limit) 'Yellow'
+                    }
+                    $sweepReported = $true
                 }
             }
         }
@@ -859,7 +886,9 @@ if ($zapretConfig) {
         }
         elseif ($configs.Count -gt 0) {
             Write-Step ''
-            Write-Step 'No config got the images through.' 'Yellow'
+            if (-not $sweepReported) {
+                Write-Step 'No config got the images through.' 'Yellow'
+            }
             Write-Step 'The address list is still checked below.' 'Yellow'
         }
     }
@@ -955,7 +984,12 @@ if ($needFix) {
 
             Write-Step ''
             Write-Step 'Next steps, easiest first:' 'Cyan'
-            Write-Step '  1. another zapret config: -ShowConfigs, then -Config "general (ALT...).bat"' 'Cyan'
+            if ($allConfigsTried) {
+                Write-Step '  1. every config was already tried - update zapret to a newer build, then run this file again' 'Cyan'
+            }
+            else {
+                Write-Step '  1. another zapret config: -ShowConfigs, then -Config "general (ALT...).bat"' 'Cyan'
+            }
             Write-Step '  2. a VPN with split tunneling for Discord, or a proxy for Discord' 'Cyan'
 
             if ($tcpTarget) {

@@ -14,6 +14,25 @@ Every release is a git tag `v<version>` (for example `v1.3.0`), and the release
 archive `discord-media-fix.zip` always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
 
+## [1.6.0] - 2026-11-23
+
+### Added
+
+- **Every config is tried, not just the first five.** When the media hosts still
+  do not answer, the sweep now goes through the whole zapret folder: the
+  remembered config, `general.bat`, every other `general*`, then the rest. The
+  winner is remembered, so the full sweep is paid only once.
+- `-MaxConfigs N` bounds the sweep for people who would rather not wait; the
+  default is all configs. `-Config` still pins exactly one.
+- The console says how many configs are queued, and after an exhausted sweep
+  says so honestly ("All 12 configs were tried") and changes the next-step hint
+  to "update zapret to a newer build", since there is no untried config left.
+
+### Changed
+
+- README (EN/RU) documents the full sweep, the time it can take and
+  `-MaxConfigs`, instead of promising "up to 5".
+
 ## [1.5.1] - 2026-11-23
 
 ### Changed
