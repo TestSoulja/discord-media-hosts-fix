@@ -33,7 +33,7 @@
       -Remove          delete the pin block and exit
       -NoRestart       do not restart the Discord client
       -DryRun          print the result, change nothing
-      -Force           pin even if Discord media already loads here
+      -Force           re-probe and re-pin even if everything already works
       -NoZapret        do not touch zapret, only pin hosts
       -ZapretDir PATH  zapret folder (auto-detected when omitted)
       -Config NAME     config to start, e.g. "general (ALT11).bat"
@@ -46,6 +46,12 @@
       -HostsFile PATH  alternate hosts file (for testing)
       -Hosts NAME...   hostnames to pin (default: the three Discord media hosts)
       -ExtraIPs IP...  extra candidate addresses to probe first
+      -Version         print the script version and exit
+
+  Versioning: Semantic Versioning (MAJOR.MINOR.PATCH). The version is defined
+  once below in $AppVersion, the tag is v<version>, and every change is written
+  down in CHANGELOG.md. When releasing: bump $AppVersion, add a CHANGELOG entry,
+  commit, tag v<version>, and attach the three files as discord-media-fix.zip.
 #>
 [CmdletBinding()]
 param(
@@ -58,6 +64,7 @@ param(
     [switch]$RestartZapret,
     [switch]$NoPrompt,
     [switch]$Prompt,
+    [switch]$Version,
     [string]$ZapretDir = '',
     [string]$Config = '',
     [string]$HostsFile = (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'),
@@ -69,7 +76,25 @@ param(
     [string[]]$ExtraIPs = @()
 )
 
+# Single source of truth for the version. Keep in sync with CHANGELOG.md.
+$AppVersion = '1.3.0'
+
 $ErrorActionPreference = 'Stop'
+
+if ($Version) {
+    "fix-discord-media $AppVersion"
+    return
+}
+
+# When the script is started with -File (which is what the .bat does), PowerShell
+# passes list arguments as one literal string: -Hosts a,b,c arrives as "a,b,c".
+# Split and trim so both forms work.
+$Hosts = @($Hosts | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$ExtraIPs = @($ExtraIPs | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+if (-not $Hosts -or $Hosts.Count -eq 0) {
+    $Hosts = @('media.discordapp.net', 'images-ext-1.discordapp.net', 'images-ext-2.discordapp.net')
+}
 
 $pinStart = '# >>> discord-media-pin (auto) >>>'
 $pinEnd   = '# <<< discord-media-pin (auto) <<<'
@@ -310,7 +335,10 @@ function Get-TextWithoutPin {
 # Probes the endpoint through curl.exe with -s (silent), so a timeout never
 # becomes a terminating NativeCommandError. Returns ok / dead / nocurl.
 function Test-MediaEndpoint {
-    param([string]$ResolveTo = '')
+    param(
+        [string]$ResolveTo = '',
+        [string]$HostName = 'media.discordapp.net'
+    )
 
     if (-not (Test-Path -LiteralPath $curlPath)) { return 'nocurl' }
 
@@ -318,8 +346,8 @@ function Test-MediaEndpoint {
     $ErrorActionPreference = 'Continue'
     try {
         $curlArgs = @('-s', '-o', 'NUL', '-m', '5', '-w', '%{http_code}')
-        if ($ResolveTo) { $curlArgs += @('--resolve', "media.discordapp.net:443:$ResolveTo") }
-        $curlArgs += 'https://media.discordapp.net/'
+        if ($ResolveTo) { $curlArgs += @('--resolve', "${HostName}:443:$ResolveTo") }
+        $curlArgs += "https://$HostName/"
 
         $code = & $curlPath @curlArgs 2>$null
         if ($LASTEXITCODE -ne 0) { return 'dead' }
@@ -358,7 +386,7 @@ function Start-Discord {
 }
 
 Write-Step ''
-Write-Step '=== Discord media fix (zapret + hosts) ===' 'Cyan'
+Write-Step ("=== Discord media fix v{0} (zapret + hosts) ===" -f $AppVersion) 'Cyan'
 
 # ---------- undo ----------
 if ($Remove) {
@@ -406,6 +434,7 @@ $zapretHome   = ''
 $zapretConfig = ''
 
 if (-not $NoZapret) {
+    Write-Step 'This file starts the zapret bypass - Discord is opened separately, as usual.' 'DarkGray'
     $zapretHome = Find-ZapretDir -Path $ZapretDir
     if (-not $zapretHome) {
         Write-Step 'zapret folder not found.' 'Yellow'
@@ -480,16 +509,6 @@ if (-not $NoZapret) {
     }
 }
 
-# ---------- already fixed? ----------
-if ($isSystemFile -and -not $Force) {
-    if ((Test-MediaEndpoint) -eq 'ok') {
-        Write-Step ''
-        Write-Step 'Discord media already loads on this machine - nothing to do.' 'Green'
-        Write-Step 'Use -Force to start zapret and pin the addresses anyway.' 'DarkGray'
-        exit 0
-    }
-}
-
 # ---------- bring the bypass up ----------
 if ($zapretConfig) {
     $configName = Split-Path -Leaf $zapretConfig
@@ -527,91 +546,133 @@ if ($zapretConfig) {
     }
 }
 
-# ---------- find addresses that answer ----------
-Write-Step ''
-Write-Step 'Probing Cloudflare addresses for the Discord CDN...' 'Gray'
-
-$candidates = @($ExtraIPs) + @($preferred)
-$candidates += foreach ($last in 232, 233) {
-    foreach ($n in 128..141) { "162.159.$n.$last" }
-}
-$candidates = @($candidates | Where-Object { $_ } | Select-Object -Unique)
-
-$alive = @()
-$tried = 0
-$probeLimit = 20
-
-foreach ($ip in $candidates) {
-    if ($alive.Count -ge 4 -or $tried -ge $probeLimit) { break }
-    $tried++
-
-    $result = Test-MediaEndpoint -ResolveTo $ip
-    if ($result -eq 'ok') {
-        $alive += $ip
-        Write-Step "  $ip  answers" 'Green'
+# ---------- do the pinned addresses still work? ----------
+# The bypass is already up, so this is what Discord will actually see. It only
+# decides whether hosts has to be rewritten; the file is used to start the
+# bypass every day, so a healthy check must never stop it from doing that.
+$needFix = $true
+if ($isSystemFile -and -not $Force) {
+    $dead = @()
+    foreach ($name in $Hosts) {
+        if ((Test-MediaEndpoint -HostName $name) -ne 'ok') { $dead += $name }
     }
-    elseif ($result -eq 'dead') {
-        Write-Step "  $ip  no answer" 'DarkGray'
+
+    if ($dead.Count -eq 0) {
+        $needFix = $false
     }
     else {
-        Write-Step "  $ip  skipped (no curl.exe)" 'DarkGray'
+        Write-Step ("Not answering right now: {0} - will re-pin." -f ($dead -join ', ')) 'Yellow'
     }
 }
 
-if ($alive.Count -eq 0 -and (Test-Path -LiteralPath $curlPath)) {
+# ---------- fix the hosts (only when needed) ----------
+if ($needFix) {
+
+    # ----- find addresses that answer -----
     Write-Step ''
-    Write-Step 'No address answered.' 'Red'
-    Write-Step 'zapret is not up, or the whole Cloudflare range is blocked on this network.' 'Yellow'
-    Write-Step 'Start your zapret config and run this file again, or use a VPN for Discord.' 'Yellow'
-    Write-Step 'hosts was left unchanged.' 'Yellow'
-    exit 2
-}
+    Write-Step 'Probing Cloudflare addresses for the Discord CDN...' 'Gray'
 
-if ($alive.Count -eq 0) {
-    $alive = @('162.159.141.232', '162.159.131.233', '162.159.132.233', '162.159.133.233')
-    Write-Step ("curl.exe not found - using the known-good list: {0}" -f ($alive -join ', ')) 'Yellow'
-}
+    $candidates = @($ExtraIPs) + @($preferred)
+    $candidates += foreach ($last in 232, 233) {
+        foreach ($n in 128..141) { "162.159.$n.$last" }
+    }
+    $candidates = @($candidates | Where-Object { $_ } | Select-Object -Unique)
 
-Write-Step ''
-Write-Step ("Pinning {0}: {1}" -f $alive.Count, ($alive -join ', ')) 'Green'
+    $alive = @()
+    $tried = 0
+    $probeLimit = 20
 
-# ---------- write hosts ----------
-$current = Get-HostsText -Path $HostsFile
-$clean = (Get-TextWithoutPin $current.Text).TrimEnd("`r", "`n")
+    foreach ($ip in $candidates) {
+        if ($alive.Count -ge 4 -or $tried -ge $probeLimit) { break }
+        $tried++
 
-$block = @($pinStart)
-foreach ($name in $Hosts) {
-    foreach ($ip in $alive) { $block += "$ip $name" }
-}
-$block += $pinEnd
+        $result = Test-MediaEndpoint -ResolveTo $ip
+        if ($result -eq 'ok') {
+            $alive += $ip
+            Write-Step "  $ip  answers" 'Green'
+        }
+        elseif ($result -eq 'dead') {
+            Write-Step "  $ip  no answer" 'DarkGray'
+        }
+        else {
+            Write-Step "  $ip  skipped (no curl.exe)" 'DarkGray'
+        }
+    }
 
-$newText = $clean + "`r`n`r`n" + ($block -join "`r`n") + "`r`n"
+    if ($alive.Count -eq 0 -and (Test-Path -LiteralPath $curlPath)) {
+        Write-Step ''
+        Write-Step 'No address answered.' 'Red'
+        Write-Step 'zapret is not up, or the whole Cloudflare range is blocked on this network.' 'Yellow'
+        Write-Step 'Start your zapret config and run this file again, or use a VPN for Discord.' 'Yellow'
+        Write-Step 'hosts was left unchanged.' 'Yellow'
+        exit 2
+    }
 
-if ($DryRun) {
+    if ($alive.Count -eq 0) {
+        $alive = @('162.159.141.232', '162.159.131.233', '162.159.132.233', '162.159.133.233')
+        Write-Step ("curl.exe not found - using the known-good list: {0}" -f ($alive -join ', ')) 'Yellow'
+    }
+
     Write-Step ''
-    Write-Step '--- resulting hosts (dry run, nothing written) ---' 'DarkGray'
-    Write-Step $newText
-}
-elseif ($newText -eq $current.Text) {
-    Write-Step 'hosts already has these pins - nothing to change.' 'Green'
+    Write-Step ("Pinning {0}: {1}" -f $alive.Count, ($alive -join ', ')) 'Green'
+
+    # ----- write hosts -----
+    $current = Get-HostsText -Path $HostsFile
+    $clean = (Get-TextWithoutPin $current.Text).TrimEnd("`r", "`n")
+
+    $block = @($pinStart)
+    foreach ($name in $Hosts) {
+        foreach ($ip in $alive) { $block += "$ip $name" }
+    }
+    $block += $pinEnd
+
+    $newText = $clean + "`r`n`r`n" + ($block -join "`r`n") + "`r`n"
+
+    if ($DryRun) {
+        Write-Step ''
+        Write-Step '--- resulting hosts (dry run, nothing written) ---' 'DarkGray'
+        Write-Step $newText
+    }
+    elseif ($newText -eq $current.Text) {
+        Write-Step 'hosts already has these pins - nothing to change.' 'Green'
+    }
+    else {
+        try {
+            $backup = Save-HostsText -Path $HostsFile -Text $newText -Kind $current.Kind
+            & ipconfig /flushdns | Out-Null
+            Write-Step "hosts updated. Backup: $backup" 'Green'
+            Write-Step 'DNS cache flushed.' 'Green'
+        }
+        catch {
+            Write-Step ''
+            Write-Step "Could not write hosts: $($_.Exception.Message)" 'Red'
+            Write-Step 'Usually Microsoft Defender "Controlled folder access" - allow the change for a minute.' 'Yellow'
+            exit 1
+        }
+    }
 }
 else {
-    try {
-        $backup = Save-HostsText -Path $HostsFile -Text $newText -Kind $current.Kind
-        & ipconfig /flushdns | Out-Null
-        Write-Step "hosts updated. Backup: $backup" 'Green'
-        Write-Step 'DNS cache flushed.' 'Green'
+    $current = Get-HostsText -Path $HostsFile
+    $pinState = 'no'
+    if ($current.Text -match [regex]::Escape($pinStart)) { $pinState = 'yes' }
+
+    Write-Step ''
+    Write-Step 'All Discord media hosts answer - the pins are fine, hosts left as is.' 'Green'
+    Write-Step ("  hosts pins:      {0}" -f $pinState) 'DarkGray'
+    Write-Step ''
+    if (Test-Winws) {
+        Write-Step 'The bypass is up and the pins are fine - Discord is ready.' 'Cyan'
     }
-    catch {
-        Write-Step ''
-        Write-Step "Could not write hosts: $($_.Exception.Message)" 'Red'
-        Write-Step 'Usually Microsoft Defender "Controlled folder access" - allow the change for a minute.' 'Yellow'
-        exit 1
+    else {
+        Write-Step 'The pins are fine. Start zapret if it is not running yet.' 'Cyan'
     }
+    Write-Step 'This file is not a Discord launcher: open Discord from its usual shortcut.' 'Cyan'
+    Write-Step 'If it still shows broken images, close it completely (tray icon too),' 'Yellow'
+    Write-Step 'open it again, or run this file with -Force.' 'Yellow'
 }
 
-# ---------- restart Discord ----------
-if (-not ($NoRestart -or $DryRun)) {
+# ---------- restart Discord (only after the hosts really changed) ----------
+if ($needFix -and -not ($NoRestart -or $DryRun)) {
     $clientNames = @('Discord', 'DiscordPTB', 'DiscordCanary', 'DiscordDevelopment')
     $running = @()
     foreach ($name in $clientNames) {
@@ -650,7 +711,7 @@ Write-Step ''
 if ($zapretConfig) {
     $configName = Split-Path -Leaf $zapretConfig
     Write-Step ("From now on start zapret with this file, not only with {0}:" -f $configName) 'Cyan'
-    Write-Step '  it starts the same config and refreshes the pinned addresses.' 'Cyan'
+    Write-Step '  it starts the same config and re-pins the addresses when they stop working.' 'Cyan'
 }
 Write-Step 'Discord itself starts as usual, from its normal shortcut.' 'Cyan'
 Write-Step 'A VPN must be off for Discord: this fix needs a direct connection with zapret.' 'Yellow'

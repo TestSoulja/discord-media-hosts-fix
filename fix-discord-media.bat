@@ -18,6 +18,13 @@ if not exist "%~dp0fix-discord-media.ps1" (
     exit /b 1
 )
 
+rem Version needs no administrator rights.
+if /i "%~1"=="-Version" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fix-discord-media.ps1" -Version
+    pause
+    exit /b 0
+)
+
 fltmc >nul 2>&1
 if errorlevel 1 (
     echo Requesting administrator rights...

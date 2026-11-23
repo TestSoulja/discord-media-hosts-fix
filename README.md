@@ -4,6 +4,8 @@ One-click fix for the situation when you already run **zapret** (DPI bypass), bu
 
 The script starts your zapret config if it is not running, probes Cloudflare addresses that serve the Discord media CDN, keeps the ones that actually answer, pins them in the Windows `hosts` file inside a marked block, and restarts Discord.
 
+**Version 1.3.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
+
 * [Русское описание — ниже](#русский)
 
 ---
@@ -41,9 +43,25 @@ D:\zapret\
 1. Windows asks for administrator rights — click **Yes**.
 2. If zapret is not running, pick a config from the list (number + Enter).
 3. Wait 10–30 seconds while it probes addresses.
-4. Discord restarts by itself. Images load.
+4. Discord restarts by itself if the pins changed. Images load.
 
-You only do this once. After that, **start zapret with this same file** instead of `general.bat`: it starts the same config and refreshes the pinned addresses. Discord itself starts as usual, from its normal shortcut — no special launch needed. Keep the minimized zapret window open: closing it stops the bypass.
+You only do this once. After that, **start zapret with this same file** instead of `general.bat`: it starts the same config and re-pins the addresses if they stop working. Keep the minimized zapret window open: closing it stops the bypass.
+
+### Everyday use — this file is not a Discord launcher
+
+`fix-discord-media.bat` starts the **zapret bypass**; it does not open Discord. Open Discord from your normal shortcut or the tray, as always.
+
+Typical day: turn on the PC → double-click `fix-discord-media.bat` → pick the config if asked → open Discord normally.
+
+Running it again at any time is safe and does no harm. If the bypass is already up and the pins still work, it changes nothing and just says so:
+
+```
+All Discord media hosts answer - the pins are fine, hosts left as is.
+The bypass is up and the pins are fine - Discord is ready.
+This file is not a Discord launcher: open Discord from its usual shortcut.
+```
+
+If a host stops answering, it re-probes the Cloudflare range, updates the `hosts` block and restarts Discord itself.
 
 > **A VPN must be off for Discord.** The fix does not work while a VPN or a TUN-mode tunnel (for example Happ) is active: traffic leaves through the tunnel and the pinned direct addresses are not reachable, so images break again. Turn the VPN off, or exclude `*.discordapp.net` from the tunnel.
 
@@ -75,9 +93,9 @@ The only thing that works is a **different destination address** that serves the
 ## What the script does
 
 1. Finds your zapret folder and your config (`general.bat`, `general (ALT11).bat`, …).
-2. If `winws.exe` is not running, starts that config and waits for it.
-3. Checks whether Discord media already loads. If it does, stops there (use `-Force` to pin anyway).
-4. Probes a shortlist of Cloudflare edge addresses, then scans the wider range, keeping up to 4 that answer.
+2. Starts that config on every run and waits for `winws.exe` (an already running one is reused).
+3. Checks the three Discord media hosts through the running bypass. If all answer, `hosts` is left alone — that is the normal second and later run.
+4. Otherwise probes a shortlist of Cloudflare edge addresses, then scans the wider range, keeping up to 4 that answer.
 5. Writes them into `hosts`, once per hostname — 12 lines in a marked block.
 6. Flushes the DNS cache and restarts the Discord client that was running (Stable / PTB / Canary / Development).
 
@@ -104,7 +122,7 @@ Options (pass them through the `.bat` or call the `.ps1` from an elevated PowerS
 | Option | Meaning |
 |---|---|
 | `-Remove` | delete the pin block and exit |
-| `-Force` | pin even if Discord media already loads here |
+| `-Force` | re-probe and re-pin even if everything already works |
 | `-DryRun` | print the resulting `hosts`, change nothing |
 | `-NoRestart` | do not touch the Discord client |
 | `-NoZapret` | do not look for or start zapret, only pin hosts |
@@ -117,6 +135,7 @@ Options (pass them through the `.bat` or call the `.ps1` from an elevated PowerS
 | `-HostsFile <path>` | alternate `hosts` file (for testing) |
 | `-Hosts <name...>` | hostnames to pin (default: the three Discord media hosts) |
 | `-ExtraIPs <ip...>` | additional candidate addresses to probe first |
+| `-Version` | print the script version and exit (no admin rights needed) |
 
 Typical cases:
 
@@ -193,6 +212,8 @@ Safety details:
 
 ## Troubleshooting
 
+**"All Discord media hosts answer — the pins are fine, hosts left as is"** — the script checked all three hosts through the running bypass and each one responded, so it left `hosts` alone on purpose. That is the normal state on the second and later runs. If Discord still shows broken images, close it completely (tray icon too) and open it again: a running client keeps its old addresses until restart. To re-probe and re-pin anyway, run with `-Force`. With a VPN on, this check can also pass while Discord still fails.
+
 **"No address answered"** — zapret is not actually up, or the network drops TLS to the whole Cloudflare range. Check the zapret window, try another config with `-Config`, or use a VPN.
 
 **"Could not write hosts"** — usually Microsoft Defender *Controlled folder access*. Allow the change for a minute, or add `powershell.exe` as an allowed app.
@@ -200,6 +221,17 @@ Safety details:
 **The block was written but images still fail** — close Discord completely (tray icon too) and open it again; a running client only re-resolves hostnames on restart.
 
 **zapret is already running under a different config** — the script reuses the running `winws.exe` and does not touch it. Stop it first if you want a different config started.
+
+## Versioning and releases
+
+This is a versioned project, not a loose set of scripts.
+
+- The version follows **Semantic Versioning** (`MAJOR.MINOR.PATCH`) and lives in one place: `$AppVersion` at the top of `fix-discord-media.ps1`. Run `fix-discord-media.bat -Version` to print it.
+- Every change is written down in [CHANGELOG.md](CHANGELOG.md) under `Added` / `Changed` / `Fixed` / `Removed`.
+- Every release is a git tag `v<version>` and a GitHub release whose `discord-media-fix.zip` contains exactly the three working files.
+- Release checklist: bump `$AppVersion` → add a CHANGELOG entry → commit → tag `v<version>` → publish the release with the archive.
+
+The current release is **v1.3.0**.
 
 ## License
 
@@ -246,9 +278,25 @@ D:\zapret\
 1. Windows спросит права администратора — **Да**.
 2. Если zapret не запущен, выберите конфиг из списка (номер + Enter).
 3. Подождите 10–30 секунд, пока проверяются адреса.
-4. Discord перезапустится сам. Картинки загрузятся.
+4. Discord перезапустится сам, если пины изменились. Картинки загрузятся.
 
-Делается один раз. Дальше **запускайте zapret этим же файлом**, а не `general.bat`: он поднимает тот же конфиг и обновляет закреплённые адреса. Сам Discord открывается как обычно, ярлыком — специально через батник его запускать не нужно. Свёрнутое окно zapret не закрывайте: закрыли — обход выключился.
+Делается один раз. Дальше **запускайте zapret этим же файлом**, а не `general.bat`: он поднимает тот же конфиг и перепинивает адреса, если они перестали работать. Свёрнутое окно zapret не закрывайте: закрыли — обход выключился.
+
+### Каждый день — этот файл не запускает Discord
+
+`fix-discord-media.bat` запускает **обход zapret**, а не Discord. Сам Discord открывается как обычно — ярлыком или из трея.
+
+Обычный день: включили компьютер → двойной клик по `fix-discord-media.bat` → при необходимости выбрали конфиг → открыли Discord как всегда.
+
+Запускать повторно можно сколько угодно, это ничего не ломает. Если обход уже работает и пины живы, скрипт ничего не меняет и просто сообщает:
+
+```
+All Discord media hosts answer - the pins are fine, hosts left as is.
+The bypass is up and the pins are fine - Discord is ready.
+This file is not a Discord launcher: open Discord from its usual shortcut.
+```
+
+Если какой-то хост перестал отвечать, скрипт заново проверяет диапазон Cloudflare, обновляет блок в `hosts` и сам перезапускает Discord.
 
 > **VPN должен быть выключен.** С включённым VPN или туннелем (например, Happ в TUN-режиме) фикс не работает: трафик уходит через туннель, закреплённые адреса прямого подключения недоступны — картинки снова отвалятся. Выключите VPN или исключите `*.discordapp.net` из туннеля.
 
@@ -343,5 +391,17 @@ Enter = the default, q = cancel
 ### Если не сработало
 
 - **«No address answered»** — zapret не поднялся или сеть режет весь диапазон. Проверьте окно zapret, попробуйте другой конфиг через `-Config` либо VPN.
+- **«All Discord media hosts answer — the pins are fine, hosts left as is»** — скрипт проверил все три хоста через работающий обход, каждый ответил, поэтому `hosts` он намеренно не трогал. Это нормальное состояние при втором и последующих запусках. Если в Discord картинки всё равно битые — закройте его полностью (включая иконку в трее) и откройте снова: работающий клиент держит старые адреса до перезапуска. Перепроверить и перепинить принудительно — запуск с `-Force`. При включённом VPN эта проверка тоже может пройти, хотя Discord будет ломаться.
 - **«Could not write hosts»** — чаще всего Defender *Controlled folder access*: разрешите изменение на минуту.
 - **Блок записался, но картинок нет** — полностью закройте Discord (включая иконку в трее) и откройте снова.
+
+### Версии и релизы
+
+Проект версионируется по-настоящему.
+
+- Версия по **Semantic Versioning** (`MAJOR.MINOR.PATCH`) хранится в одном месте — `$AppVersion` в начале `fix-discord-media.ps1`. Показать её: `fix-discord-media.bat -Version`.
+- Все изменения записываются в [CHANGELOG.md](CHANGELOG.md) в разделах «Добавлено / Изменено / Исправлено / Удалено».
+- Каждый релиз — это тег `v<версия>` и релиз на GitHub, в архиве которого ровно три рабочих файла.
+- Порядок выпуска: поднять `$AppVersion` → добавить запись в CHANGELOG → коммит → тег `v<версия>` → опубликовать релиз с архивом.
+
+Текущий релиз — **v1.3.0**.
