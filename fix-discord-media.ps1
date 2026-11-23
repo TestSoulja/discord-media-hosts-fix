@@ -522,13 +522,14 @@ function Get-AliveAddresses {
 }
 
 # Distinguishes the two failure modes nobody should mix up:
-#   blackhole - TCP 443 itself does not connect, the addresses are dropped;
-#   name      - TCP connects, TLS to the Discord host dies, the block is by name.
+#   blackhole   - TCP 443 itself does not connect, the addresses are dropped;
+#   name|<ip>   - TCP connects, TLS to the Discord host dies, block is by name.
+# The connected address is returned so the failure report can stay concrete.
 function Get-BlockDiagnosis {
     param([string[]]$Addresses, [int]$TimeoutMs = 6000)
 
     foreach ($ip in $Addresses) {
-        if (Test-TcpPort -Address $ip -TimeoutMs $TimeoutMs) { return 'name' }
+        if (Test-TcpPort -Address $ip -TimeoutMs $TimeoutMs) { return "name|$ip" }
     }
     return 'blackhole'
 }
@@ -639,26 +640,27 @@ $vpnNames = (@($vpnAdapters) | Select-Object -ExpandProperty Name -Unique) -join
 if ($vpnDefault) {
     Write-Step ''
     if ($DryRun) {
-        Write-Step ("VPN carries the default route: {0}" -f $vpnNames) 'Yellow'
-        Write-Step 'With a VPN on, the pinned addresses are not reachable - turn it off for the real run.' 'Yellow'
+        Write-Step ("VPN is on and carries all traffic: {0}" -f $vpnNames) 'Yellow'
+        Write-Step 'The fixed addresses only work on a direct connection - turn the VPN off for the real run.' 'Yellow'
     }
     elseif ($IgnoreVpn) {
-        Write-Step ("VPN carries the default route ({0}) - continuing because -IgnoreVpn was passed." -f $vpnNames) 'Yellow'
+        Write-Step ("VPN is on ({0}) - continuing because -IgnoreVpn was passed." -f $vpnNames) 'Yellow'
     }
     else {
-        Write-Step ("VPN or TUN tunnel is active: {0}" -f $vpnNames) 'Red'
-        Write-Step 'This fix needs a direct connection. Through a tunnel the pinned addresses are not' 'Yellow'
-        Write-Step 'reachable, images stay broken, and zapret cannot help either.' 'Yellow'
+        Write-Step ("VPN is on: {0}. Nothing was changed." -f $vpnNames) 'Red'
+        Write-Step 'This fix needs a direct connection. While the VPN is on, Discord images already' 'Yellow'
+        Write-Step 'travel through the tunnel - and zapret cannot help inside it.' 'Yellow'
         Write-Step ''
-        Write-Step 'Turn the VPN off and run this file again, or exclude *.discordapp.net from the tunnel.' 'Cyan'
+        Write-Step 'Turn the VPN off and run this file again.' 'Cyan'
+        Write-Step 'Or keep the VPN for everything else and send only Discord through it (split tunneling).' 'Cyan'
         Write-Step 'To try anyway, add -IgnoreVpn.' 'Gray'
         exit 3
     }
 }
 elseif ($vpnAdapters.Count -gt 0) {
     Write-Step ''
-    Write-Step ("A tunnel adapter is up ({0}), but traffic does not go through it." -f $vpnNames) 'DarkGray'
-    Write-Step 'Fine for the fix. If Discord still fails, check that *discordapp.net is excluded from it.' 'DarkGray'
+    Write-Step ("A VPN adapter is up ({0}), but your traffic does not go through it." -f $vpnNames) 'DarkGray'
+    Write-Step 'Fine for this fix. If Discord still fails later, check what the VPN does with *discordapp.net.' 'DarkGray'
 }
 
 $zapretHome   = ''
@@ -667,12 +669,12 @@ $configs      = @()
 $interactive  = $false
 
 if (-not $NoZapret) {
-    Write-Step 'One-time fix: this file starts the zapret bypass, not Discord. After it, use your usual launcher.' 'DarkGray'
+    Write-Step 'One-time fix: this file starts zapret, not Discord. Later, open Discord as usual.' 'DarkGray'
     $zapretHome = Find-ZapretDir -Path $ZapretDir
     if (-not $zapretHome) {
-        Write-Step 'zapret folder not found.' 'Yellow'
-        Write-Step 'Pass it explicitly: -ZapretDir "D:\zapret" (the folder with bin\winws.exe).' 'Yellow'
-        Write-Step 'Continuing in hosts-only mode: probing and pinning anyway.' 'Yellow'
+        Write-Step 'No zapret folder found.' 'Yellow'
+        Write-Step 'Point the script at it: -ZapretDir "D:\zapret" (the folder with bin\winws.exe).' 'Yellow'
+        Write-Step 'Continuing without zapret: only the address list will be checked.' 'Yellow'
     }
     else {
         Write-Step "zapret folder: $zapretHome" 'DarkGray'
@@ -700,7 +702,7 @@ if (-not $NoZapret) {
 
         if ($configs.Count -eq 0) {
             Write-Step 'No config (.bat) found in the zapret folder.' 'Yellow'
-            Write-Step 'Continuing in hosts-only mode.' 'Yellow'
+            Write-Step 'Continuing without starting zapret.' 'Yellow'
         }
         elseif ($Config) {
             $zapretConfig = Resolve-ZapretConfig -Dir $zapretHome -Name $Config
@@ -758,22 +760,22 @@ if ($zapretConfig) {
         $healthy = $false
 
         if ((Test-Winws) -and -not $RestartZapret) {
-            Write-Step 'zapret (winws) is already running - checking media through it.' 'DarkGray'
+            Write-Step 'zapret is already running - checking whether images get through it.' 'DarkGray'
             $healthy = Test-MediaAlive -Addresses $seed -Attempts 2
             if ($healthy) {
                 $bypassUp = $true
-                Write-Step 'The running bypass gets media through.' 'Green'
+                Write-Step 'Images get through the running zapret.' 'Green'
             }
             else {
-                Write-Step 'Media does not answer through it - the bypass will be restarted.' 'Yellow'
+                Write-Step 'Images do not get through it - restarting zapret with another config.' 'Yellow'
             }
         }
 
         if (-not $healthy) {
             $serviceMode = Test-ZapretService
             if ($serviceMode) {
-                Write-Step 'zapret runs as a Windows service - the script will not restart it.' 'Yellow'
-                Write-Step 'Restart the service yourself if you want another config.' 'Yellow'
+                Write-Step 'zapret is installed as a Windows service - the script will not restart it.' 'Yellow'
+                Write-Step 'Restart that service yourself if you want another config.' 'Yellow'
             }
             else {
                 $order = @(Get-ConfigOrder -Configs $configs -Preferred $zapretConfig)
@@ -784,7 +786,7 @@ if ($zapretConfig) {
                 for ($i = 0; $i -lt $limit; $i++) {
                     $candidate = $order[$i]
                     Write-Step ''
-                    Write-Step ("Config {0}/{1}: {2}" -f ($i + 1), $limit, (Split-Path -Leaf $candidate)) 'Cyan'
+                    Write-Step ("Trying config {0} of {1}: {2}" -f ($i + 1), $limit, (Split-Path -Leaf $candidate)) 'Cyan'
 
                     if (-not (Start-ZapretConfig -Path $candidate)) { continue }
                     $lastStarted = $candidate
@@ -793,16 +795,16 @@ if ($zapretConfig) {
                         $bypassUp = $true
                         $bypassConfig = $candidate
                         Save-Choice (Split-Path -Leaf $candidate)
-                        Write-Step 'This config works - keeping it.' 'Green'
+                        Write-Step 'This one works - keeping it.' 'Green'
                         break
                     }
 
-                    Write-Step ("{0} does not get media through." -f (Split-Path -Leaf $candidate)) 'Yellow'
+                    Write-Step ("{0} did not get images through." -f (Split-Path -Leaf $candidate)) 'Yellow'
 
                     # If even TCP 443 never connects, another config cannot fix it.
                     if ((Get-BlockDiagnosis -Addresses $seed) -eq 'blackhole') {
-                        Write-Step 'TCP 443 does not connect to the CDN at all - switching configs would not help.' 'Yellow'
-                        Write-Step 'Keeping the bypass up for chat and voice.' 'Yellow'
+                        Write-Step 'The Discord CDN does not answer at all here - another config cannot open it.' 'Yellow'
+                        Write-Step 'Keeping zapret up for chat and voice.' 'Yellow'
                         break
                     }
                 }
@@ -815,12 +817,12 @@ if ($zapretConfig) {
         }
         elseif ($serviceMode) {
             Write-Step ''
-            Write-Step 'The service keeps the bypass up; media is still probed and pinned below.' 'Yellow'
+            Write-Step 'The service keeps zapret up; the address list is still checked below.' 'Yellow'
         }
         elseif ($configs.Count -gt 0) {
             Write-Step ''
-            Write-Step 'No tried config got the media hosts through.' 'Yellow'
-            Write-Step 'The addresses are still probed and pinned below.' 'Yellow'
+            Write-Step 'No config got the images through.' 'Yellow'
+            Write-Step 'The address list is still checked below.' 'Yellow'
         }
     }
 }
@@ -842,7 +844,7 @@ if ($isSystemFile -and -not $Force) {
         $needFix = $false
     }
     else {
-        Write-Step ("Not answering right now: {0} - will re-pin." -f ($dead -join ', ')) 'Yellow'
+        Write-Step ("Not answering right now: {0} - checking other addresses." -f ($dead -join ', ')) 'Yellow'
     }
 }
 
@@ -863,7 +865,7 @@ if ($needFix) {
 
     if ($alive.Count -eq 0 -and (Test-Path -LiteralPath $curlPath)) {
         Write-Step ''
-        Write-Step 'Nothing on the first pass - retrying slowly, throttled lines need longer.' 'Gray'
+        Write-Step 'Nothing yet - trying again with a longer wait (slow connections need it).' 'Gray'
         $retry = @($candidates | Select-Object -First 4)
         $alive = @(Get-AliveAddresses -Candidates $retry -HostName 'media.discordapp.net' -Limit 4 -TimeoutSec 12 -Wanted 2)
     }
@@ -871,29 +873,36 @@ if ($needFix) {
     if ($alive.Count -eq 0 -and (Test-Path -LiteralPath $curlPath)) {
         # Tell the two failures apart instead of blaming the whole Cloudflare range.
         $reason = Get-BlockDiagnosis -Addresses @($candidates | Select-Object -First 3)
+        $tcpTarget = ''
+        if ($reason -like 'name|*') { $tcpTarget = $reason.Substring(5); $reason = 'name' }
+
         Write-Step ''
         Write-Step 'No address answered.' 'Red'
 
         if ($reason -eq 'blackhole') {
-            Write-Step 'TCP 443 does not connect to any of them: this network drops the CDN' 'Yellow'
-            Write-Step 'addresses (or throttles them so hard the connection never opens).' 'Yellow'
-            Write-Step 'Rotating hosts entries cannot help - the addresses are unreachable, not the names.' 'Yellow'
+            Write-Step 'None of them accepted a connection at all. Something on the network drops' 'Yellow'
+            Write-Step 'these addresses (or slows them to a standstill), so another address cannot help.' 'Yellow'
             Write-Step ''
-            Write-Step 'What works here: a tunnel for Discord only - a VPN with split tunneling' 'Cyan'
-            Write-Step 'for 162.159.128.0/18 - or a proxy configured just for Discord.' 'Cyan'
+            Write-Step 'What actually works: send only Discord through a VPN (split tunneling)' 'Cyan'
+            Write-Step 'or set a proxy for Discord. A VPN for the whole PC is the blunt version.' 'Cyan'
+            Write-Step ('Details: TCP 443 refused on {0}.' -f (($candidates | Select-Object -First 3) -join ', ')) 'DarkGray'
         }
         else {
-            $cfgName = ''
-            if ($bypassConfig) { $cfgName = " ({0})" -f (Split-Path -Leaf $bypassConfig) }
-            Write-Step 'TCP connects, but TLS to media.discordapp.net fails on every address:' 'Yellow'
-            Write-Step 'the block is by name, not by address, so re-pinning cannot fix it.' 'Yellow'
+            Write-Step 'The addresses do answer, but every secure connection to' 'Yellow'
+            Write-Step 'media.discordapp.net is cut off. The block is by site name, not by address,' 'Yellow'
+            Write-Step 'so changing addresses cannot fix it.' 'Yellow'
             if ($bypassUp -and -not $DryRun) {
-                Write-Step ("The bypass is up{0}, but this DPI is stronger than its desync strategy." -f $cfgName) 'Yellow'
+                $cfgName = 'the current config'
+                if ($bypassConfig) { $cfgName = Split-Path -Leaf $bypassConfig }
+                Write-Step ("zapret is running ({0}) - this block is stronger than what it can fake." -f $cfgName) 'Yellow'
             }
             Write-Step ''
-            Write-Step 'Next step: try other zapret configs - fix-discord-media.bat -ShowConfigs,' 'Cyan'
-            Write-Step 'then -Config "general (ALT...).bat". If none work, the same tunnel/proxy' 'Cyan'
-            Write-Step 'for Discord is the only reliable way.' 'Cyan'
+            Write-Step 'Next steps, easiest first:' 'Cyan'
+            Write-Step '  1. another zapret config: -ShowConfigs, then -Config "general (ALT...).bat"' 'Cyan'
+            Write-Step '  2. a VPN with split tunneling for Discord, or a proxy for Discord' 'Cyan'
+            if ($tcpTarget) {
+                Write-Step ('Details: TCP 443 to {0} is open, HTTPS to media.discordapp.net fails there.' -f $tcpTarget) 'DarkGray'
+            }
         }
 
         Write-Step ''
@@ -906,11 +915,11 @@ if ($needFix) {
 
     if ($alive.Count -eq 0) {
         $alive = @('162.159.141.232', '162.159.131.233', '162.159.132.233', '162.159.133.233')
-        Write-Step ("curl.exe not found - using the known-good list: {0}" -f ($alive -join ', ')) 'Yellow'
+        Write-Step ("curl.exe not found - using a known-good list: {0}" -f ($alive -join ', ')) 'Yellow'
     }
 
     Write-Step ''
-    Write-Step ("Pinning {0}: {1}" -f $alive.Count, ($alive -join ', ')) 'Green'
+    Write-Step ("Using these addresses: {0}" -f ($alive -join ', ')) 'Green'
 
     # ----- write hosts -----
     $current = Get-HostsText -Path $HostsFile
@@ -930,14 +939,14 @@ if ($needFix) {
         Write-Step $newText
     }
     elseif ($newText -eq $current.Text) {
-        Write-Step 'hosts already has these pins - nothing to change.' 'Green'
+        Write-Step 'The address list is already correct - nothing to change.' 'Green'
     }
     else {
         try {
             $backup = Save-HostsText -Path $HostsFile -Text $newText -Kind $current.Kind
             & ipconfig /flushdns | Out-Null
-            Write-Step "hosts updated. Backup: $backup" 'Green'
-            Write-Step 'DNS cache flushed.' 'Green'
+            Write-Step "Address list updated. Backup: $backup" 'Green'
+            Write-Step 'DNS cache cleared.' 'Green'
         }
         catch {
             Write-Step ''

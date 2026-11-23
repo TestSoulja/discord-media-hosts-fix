@@ -41,6 +41,9 @@ archive `discord-media-fix.zip` always contains exactly the three working files:
 - Timeouts are longer (`8 s`, then a slow retry with `12 s`) and the first probe
   waits until WinDivert has attached.
 - "No address answered" is no longer blamed on the whole Cloudflare range.
+- Console messages are written in plain language. The technical fact (which
+  check failed, on which address) moved to a gray `Details:` line instead of
+  being the headline, so support reports keep the same information.
 
 ### Fixed
 

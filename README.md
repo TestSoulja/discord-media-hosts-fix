@@ -222,14 +222,14 @@ Safety details:
 
 **"All Discord media hosts answer — the pins are fine, hosts left as is"** — the script checked all three hosts through the running bypass and each one responded, so it left `hosts` alone on purpose. That is the normal state on the second and later runs. If Discord still shows broken images, close it completely (tray icon too) and open it again: a running client keeps its old addresses until restart. To re-probe and re-pin anyway, run with `-Force`. With a VPN on, this check can also pass while Discord still fails.
 
-**"VPN or TUN tunnel is active" (exit code `3`)** — the default route goes through a tunnel, so the pinned addresses are unreachable. Turn the VPN off and run the file again, exclude `*.discordapp.net` from the tunnel, or pass `-IgnoreVpn` if you know the tunnel does not carry Discord traffic.
+**"VPN is on: … Nothing was changed." (exit code `3`)** — the VPN carries all traffic, so the fixed addresses are unreachable. Turn the VPN off and run the file again, send only Discord through the tunnel (split tunneling), or pass `-IgnoreVpn` if you know the tunnel does not carry Discord traffic.
 
-**"No address answered"** — followed by one of two lines:
+**"No address answered"** — followed by one of two explanations:
 
-- *"TCP connects, but TLS … fails on every address"* — the block is by name: DPI kills the handshake for `media.discordapp.net` whatever the address. Re-pinning cannot fix it. Try other zapret configs (`-ShowConfigs`, then `-Config "general (ALT...).bat"`); if none work, the way out is a tunnel or a proxy for Discord.
-- *"TCP 443 does not connect to any of them"* — the addresses themselves are dropped or throttled into uselessness. No config helps either; the way out is a tunnel for Discord only (VPN with split tunneling for `162.159.128.0/18`) or a proxy.
+- *"every secure connection to media.discordapp.net is cut off"* — the block is by name: DPI kills the handshake whatever the address. Changing addresses cannot fix it. Try other zapret configs (`-ShowConfigs`, then `-Config "general (ALT...).bat"`); if none work, the way out is a tunnel or a proxy for Discord.
+- *"None of them accepted a connection at all"* — the addresses themselves are dropped or slowed to a standstill. No config helps either; the way out is a tunnel for Discord only (VPN with split tunneling) or a proxy.
 
-In both cases `hosts` is left unchanged on purpose: no dead address is pinned.
+In both cases `hosts` is left unchanged on purpose: no dead address is pinned. The gray `Details:` line keeps the technical fact, useful when you report the problem.
 
 **"Could not write hosts"** — usually Microsoft Defender *Controlled folder access*. Allow the change for a minute, or add `powershell.exe` as an allowed app.
 
@@ -409,11 +409,11 @@ This config works - keeping it.
 
 ### Если не сработало
 
-- **«VPN or TUN tunnel is active» (код выхода `3`)** — default route идёт через туннель, поэтому закреплённые адреса недоступны. Выключите VPN и запустите снова, исключите `*.discordapp.net` из туннеля, либо добавьте `-IgnoreVpn`, если точно знаете, что Discord в туннель не попадает.
-- **«No address answered»** — дальше будет одна из двух строк:
-  - *«TCP connects, but TLS … fails on every address»* — блок по имени: DPI рвёт рукопожатие для `media.discordapp.net` на любом адресе, перепиннинг не поможет. Пробуйте другие конфиги (`-ShowConfigs`, затем `-Config "general (ALT...).bat"`); если ни один не берёт — выход только туннель или прокси для Discord.
-  - *«TCP 443 does not connect to any of them»* — режут сами адреса (или душат так, что соединение не встаёт за 6 с). Конфиги тоже не помогут: нужен туннель только для Discord (VPN со split tunneling на `162.159.128.0/18`) или прокси.
-  В обоих случаях `hosts` намеренно не меняется: мёртвые адреса не пишутся.
+- **«VPN is on: … Nothing was changed.» (код выхода `3`)** — VPN несёт весь трафик, закреплённые адреса недоступны. Выключите VPN и запустите снова, заворачивайте в туннель только Discord (split tunneling), либо добавьте `-IgnoreVpn`, если точно знаете, что Discord в туннель не попадает.
+- **«No address answered»** — дальше одно из двух объяснений:
+  - *«every secure connection to media.discordapp.net is cut off»* — блок по имени: DPI рвёт рукопожатие на любом адресе, сменой адресов это не лечится. Пробуйте другие конфиги (`-ShowConfigs`, затем `-Config "general (ALT...).bat"`); если ни один не берёт — выход только туннель или прокси для Discord.
+  - *«None of them accepted a connection at all»* — режут сами адреса (или душат так, что соединение не встаёт). Конфиги тоже не помогут: нужен туннель только для Discord (VPN со split tunneling) или прокси.
+  В обоих случаях `hosts` намеренно не меняется: мёртвые адреса не пишутся. Техническая деталь осталась в серой строке `Details:` — её удобно приложить, если сообщаете о проблеме.
 - **«All Discord media hosts answer — the pins are fine, hosts left as is»** — скрипт проверил все три хоста через работающий обход, каждый ответил, поэтому `hosts` он намеренно не трогал. Это нормальное состояние при втором и последующих запусках. Если в Discord картинки всё равно битые — закройте его полностью (включая иконку в трее) и откройте снова: работающий клиент держит старые адреса до перезапуска. Перепроверить и перепинить принудительно — запуск с `-Force`. При включённом VPN эта проверка тоже может пройти, хотя Discord будет ломаться.
 - **«Could not write hosts»** — чаще всего Defender *Controlled folder access*: разрешите изменение на минуту.
 - **Блок записался, но картинок нет** — полностью закройте Discord (включая иконку в трее) и откройте снова.
