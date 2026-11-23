@@ -14,6 +14,18 @@ Every release is a git tag `v<version>` (for example `v1.3.0`), and the release
 archive `discord-media-fix.zip` always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
 
+## [1.5.0] - 2026-11-23
+
+### Added
+
+- **Control probe for `discord.com`** next to the media probe. Two failures that
+  used to look identical are now separated: "Discord works through the bypass,
+  only the media hosts are cut off" (block by name) and "Discord does not load
+  through the bypass at all" (this config is not beating the DPI). The verdict
+  and the `Details:` line name the real culprit.
+- `dns` handling: when `discord.com` does not resolve, the control probe is
+  ignored instead of producing a false conclusion.
+
 ## [1.4.0] - 2026-11-23
 
 ### Added

@@ -6,7 +6,7 @@ The script checks that no VPN is carrying the traffic, starts your zapret config
 
 > **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
 
-**Version 1.4.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
+**Version 1.5.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -102,13 +102,13 @@ The only thing that works is a **different destination address** that serves the
 2. Finds your zapret folder and your configs (`general.bat`, `general (ALT11).bat`, …).
 3. Starts the remembered config (or `general.bat`), waits for `winws.exe`, then waits a few seconds so WinDivert really attaches before the first probe.
 4. Checks four seed addresses of `media.discordapp.net` through the bypass. If they answer, that config stays.
-5. If they do not, stops the bypass and starts the next config (up to 5) and checks again. When even TCP 443 does not connect, no desync can help and the switching stops.
+5. If they do not, asks a control question — does `discord.com` load through this bypass at all — and names which of the two it is: only the media hosts are cut, or the bypass is not beating the DPI. Then stops the bypass and starts the next config (up to 5) and repeats. When even TCP 443 does not connect, no desync can help and the switching stops.
 6. Checks the three Discord media hosts. If all answer, `hosts` is left alone — that is the normal second and later run.
 7. Otherwise probes Cloudflare edge addresses: 8 fast tries, then 4 slow retries with a longer timeout, keeping up to 4 that answer.
 8. Writes them into `hosts`, once per hostname — 12 lines in a marked block.
 9. Flushes the DNS cache and restarts the Discord client that was running (Stable / PTB / Canary / Development).
 
-If no address answers, nothing is written and the script exits with code `2` — after saying which block it is: by name (TCP connects, TLS dies) or by address (TCP 443 never connects). It never pins a dead address, and it never edits zapret's configs, lists or `service.bat`. A zapret installed as a Windows service is never killed and replaced.
+If no address answers, nothing is written and the script exits with code `2` — after naming the real cause: by name (Discord works, only the media hosts are cut), by config (even `discord.com` fails through the bypass) or by address (TCP 443 never connects). It never pins a dead address, and it never edits zapret's configs, lists or `service.bat`. A zapret installed as a Windows service is never killed and replaced.
 
 ## Requirements
 
@@ -224,10 +224,11 @@ Safety details:
 
 **"VPN is on: … Nothing was changed." (exit code `3`)** — the VPN carries all traffic, so the fixed addresses are unreachable. Turn the VPN off and run the file again, send only Discord through the tunnel (split tunneling), or pass `-IgnoreVpn` if you know the tunnel does not carry Discord traffic.
 
-**"No address answered"** — followed by one of two explanations:
+**"No address answered"** — followed by one of three explanations:
 
-- *"every secure connection to media.discordapp.net is cut off"* — the block is by name: DPI kills the handshake whatever the address. Changing addresses cannot fix it. Try other zapret configs (`-ShowConfigs`, then `-Config "general (ALT...).bat"`); if none work, the way out is a tunnel or a proxy for Discord.
-- *"None of them accepted a connection at all"* — the addresses themselves are dropped or slowed to a standstill. No config helps either; the way out is a tunnel for Discord only (VPN with split tunneling) or a proxy.
+- *"discord.com fails too"* — the bypass is not beating this DPI at all, so the media hosts fail for the same reason. Try other zapret configs (`-ShowConfigs`, then `-Config "general (ALT...).bat"`), or a tunnel/proxy for Discord.
+- *"every connection to media.discordapp.net is cut off"* — Discord itself loads through the bypass, only the media hosts are blocked by name. Changing addresses cannot fix that either; same next steps: another config, then a tunnel/proxy.
+- *"None of them accepted a connection at all"* — the addresses themselves are dropped or slowed to a standstill. No config helps; the way out is a tunnel for Discord only (VPN with split tunneling) or a proxy.
 
 In both cases `hosts` is left unchanged on purpose: no dead address is pinned. The gray `Details:` line keeps the technical fact, useful when you report the problem.
 
@@ -246,7 +247,7 @@ This is a versioned project, not a loose set of scripts.
 - Every release is a git tag `v<version>` and a GitHub release whose `discord-media-fix.zip` contains exactly the three working files.
 - Release checklist: bump `$AppVersion` → add a CHANGELOG entry → commit → tag `v<version>` → publish the release with the archive.
 
-The current release is **v1.4.0**.
+The current release is **v1.5.0**.
 
 ## License
 
@@ -410,10 +411,11 @@ This config works - keeping it.
 ### Если не сработало
 
 - **«VPN is on: … Nothing was changed.» (код выхода `3`)** — VPN несёт весь трафик, закреплённые адреса недоступны. Выключите VPN и запустите снова, заворачивайте в туннель только Discord (split tunneling), либо добавьте `-IgnoreVpn`, если точно знаете, что Discord в туннель не попадает.
-- **«No address answered»** — дальше одно из двух объяснений:
-  - *«every secure connection to media.discordapp.net is cut off»* — блок по имени: DPI рвёт рукопожатие на любом адресе, сменой адресов это не лечится. Пробуйте другие конфиги (`-ShowConfigs`, затем `-Config "general (ALT...).bat"`); если ни один не берёт — выход только туннель или прокси для Discord.
-  - *«None of them accepted a connection at all»* — режут сами адреса (или душат так, что соединение не встаёт). Конфиги тоже не помогут: нужен туннель только для Discord (VPN со split tunneling) или прокси.
-  В обоих случаях `hosts` намеренно не меняется: мёртвые адреса не пишутся. Техническая деталь осталась в серой строке `Details:` — её удобно приложить, если сообщаете о проблеме.
+- **«No address answered»** — дальше одно из трёх объяснений:
+  - *«discord.com fails too»* — обход вообще не берёт этот DPI, поэтому и медиа-хосты падают по той же причине. Пробуйте другие конфиги (`-ShowConfigs`, затем `-Config "general (ALT...).bat"`) либо туннель/прокси для Discord.
+  - *«every connection to media.discordapp.net is cut off»* — сам Discord через обход грузится, режут только медиа-хосты по имени. Сменой адресов это тоже не лечится: те же шаги — другой конфиг, затем туннель/прокси.
+  - *«None of them accepted a connection at all»* — режут сами адреса (или душат так, что соединение не встаёт). Конфиги не помогут: нужен туннель только для Discord (VPN со split tunneling) или прокси.
+  Во всех трёх случаях `hosts` намеренно не меняется: мёртвые адреса не пишутся. Техническая деталь осталась в серой строке `Details:` — её удобно приложить, если сообщаете о проблеме.
 - **«All Discord media hosts answer — the pins are fine, hosts left as is»** — скрипт проверил все три хоста через работающий обход, каждый ответил, поэтому `hosts` он намеренно не трогал. Это нормальное состояние при втором и последующих запусках. Если в Discord картинки всё равно битые — закройте его полностью (включая иконку в трее) и откройте снова: работающий клиент держит старые адреса до перезапуска. Перепроверить и перепинить принудительно — запуск с `-Force`. При включённом VPN эта проверка тоже может пройти, хотя Discord будет ломаться.
 - **«Could not write hosts»** — чаще всего Defender *Controlled folder access*: разрешите изменение на минуту.
 - **Блок записался, но картинок нет** — полностью закройте Discord (включая иконку в трее) и откройте снова.
@@ -427,4 +429,4 @@ This config works - keeping it.
 - Каждый релиз — это тег `v<версия>` и релиз на GitHub, в архиве которого ровно три рабочих файла.
 - Порядок выпуска: поднять `$AppVersion` → добавить запись в CHANGELOG → коммит → тег `v<версия>` → опубликовать релиз с архивом.
 
-Текущий релиз — **v1.4.0**.
+Текущий релиз — **v1.5.0**.

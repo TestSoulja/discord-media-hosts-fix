@@ -88,7 +88,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.4.0'
+$AppVersion = '1.5.0'
 
 $ErrorActionPreference = 'Stop'
 
@@ -488,6 +488,27 @@ function Test-MediaAlive {
     return $false
 }
 
+# Control probe: does Discord work at all through the current bypass?
+# Returns ok / fail, or dns when the name itself does not resolve (then the
+# answer says nothing about the bypass, so no conclusion is drawn from it).
+function Test-ControlHost {
+    param([string]$HostName = 'discord.com', [int]$TimeoutSec = 8)
+
+    if (-not (Test-Path -LiteralPath $curlPath)) { return 'dns' }
+
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $code = & $curlPath @('-s', '-o', 'NUL', '-m', "$TimeoutSec", '-w', '%{http_code}', "https://$HostName/") 2>$null
+        if ($LASTEXITCODE -eq 5 -or $LASTEXITCODE -eq 6) { return 'dns' }
+        if ($LASTEXITCODE -ne 0) { return 'fail' }
+        if ($code -match '^[1-5]\d\d$') { return 'ok' }
+        return 'fail'
+    }
+    catch { return 'fail' }
+    finally { $ErrorActionPreference = $saved }
+}
+
 # Probes candidate addresses and keeps the ones that answer. Bounded in time:
 # at most $Limit addresses, each with its own timeout.
 function Get-AliveAddresses {
@@ -748,6 +769,7 @@ if (-not $NoZapret) {
 $bypassUp     = $false
 $bypassConfig = ''
 $lastStarted  = ''
+$controlState = ''
 
 if ($zapretConfig) {
     $seed = @($preferred | Select-Object -First 4)
@@ -768,6 +790,13 @@ if ($zapretConfig) {
             }
             else {
                 Write-Step 'Images do not get through it - restarting zapret with another config.' 'Yellow'
+                $controlState = Test-ControlHost
+                if ($controlState -eq 'ok') {
+                    Write-Step 'Discord itself loads through it - only the media hosts are cut off.' 'Yellow'
+                }
+                elseif ($controlState -eq 'fail') {
+                    Write-Step 'Discord does not load through it either - this DPI is not beaten by it.' 'Yellow'
+                }
             }
         }
 
@@ -806,6 +835,15 @@ if ($zapretConfig) {
                         Write-Step 'The Discord CDN does not answer at all here - another config cannot open it.' 'Yellow'
                         Write-Step 'Keeping zapret up for chat and voice.' 'Yellow'
                         break
+                    }
+
+                    # Second opinion: does Discord work at all through this config?
+                    $controlState = Test-ControlHost
+                    if ($controlState -eq 'ok') {
+                        Write-Step 'Discord itself works through it - only the media hosts are cut off.' 'Yellow'
+                    }
+                    elseif ($controlState -eq 'fail') {
+                        Write-Step 'Discord does not load through it either - this config is not beating the DPI.' 'Yellow'
                     }
                 }
             }
@@ -876,6 +914,11 @@ if ($needFix) {
         $tcpTarget = ''
         if ($reason -like 'name|*') { $tcpTarget = $reason.Substring(5); $reason = 'name' }
 
+        # One more control probe when the value is not known yet (hosts-only run,
+        # or the config loop never ran), so the verdict names the real culprit.
+        if (-not $controlState) { $controlState = Test-ControlHost }
+        $bypassActive = $bypassUp -or (Test-Winws)
+
         Write-Step ''
         Write-Step 'No address answered.' 'Red'
 
@@ -888,20 +931,43 @@ if ($needFix) {
             Write-Step ('Details: TCP 443 refused on {0}.' -f (($candidates | Select-Object -First 3) -join ', ')) 'DarkGray'
         }
         else {
-            Write-Step 'The addresses do answer, but every secure connection to' 'Yellow'
-            Write-Step 'media.discordapp.net is cut off. The block is by site name, not by address,' 'Yellow'
-            Write-Step 'so changing addresses cannot fix it.' 'Yellow'
+            if ($controlState -eq 'ok') {
+                Write-Step 'Discord itself loads through the bypass, but every connection to' 'Yellow'
+                Write-Step 'media.discordapp.net is cut off. The block is on the media hosts by name,' 'Yellow'
+                Write-Step 'not on the address, so changing addresses cannot fix it.' 'Yellow'
+            }
+            elseif ($controlState -eq 'fail' -and $bypassActive) {
+                Write-Step 'The addresses answer, but Discord does not load through the running bypass' 'Yellow'
+                Write-Step 'at all (discord.com fails too), so the media hosts fail for the same reason.' 'Yellow'
+                Write-Step 'This DPI is simply not being beaten by the config that is running.' 'Yellow'
+            }
+            else {
+                Write-Step 'The addresses answer, but Discord does not load at all here: even discord.com' 'Yellow'
+                Write-Step 'fails. So it is not about the addresses - nothing is getting past this DPI,' 'Yellow'
+                Write-Step 'and the media hosts fail for the same reason.' 'Yellow'
+            }
+
             if ($bypassUp -and -not $DryRun) {
                 $cfgName = 'the current config'
                 if ($bypassConfig) { $cfgName = Split-Path -Leaf $bypassConfig }
-                Write-Step ("zapret is running ({0}) - this block is stronger than what it can fake." -f $cfgName) 'Yellow'
+                Write-Step ("Running config: {0}." -f $cfgName) 'Gray'
             }
+
             Write-Step ''
             Write-Step 'Next steps, easiest first:' 'Cyan'
             Write-Step '  1. another zapret config: -ShowConfigs, then -Config "general (ALT...).bat"' 'Cyan'
             Write-Step '  2. a VPN with split tunneling for Discord, or a proxy for Discord' 'Cyan'
+
             if ($tcpTarget) {
-                Write-Step ('Details: TCP 443 to {0} is open, HTTPS to media.discordapp.net fails there.' -f $tcpTarget) 'DarkGray'
+                if ($controlState -eq 'ok') {
+                    Write-Step ('Details: TCP 443 to {0} is open; discord.com loads; media.discordapp.net fails.' -f $tcpTarget) 'DarkGray'
+                }
+                elseif ($controlState -eq 'fail') {
+                    Write-Step ('Details: TCP 443 to {0} is open; both discord.com and media.discordapp.net fail.' -f $tcpTarget) 'DarkGray'
+                }
+                else {
+                    Write-Step ('Details: TCP 443 to {0} is open; media.discordapp.net fails (control check unavailable).' -f $tcpTarget) 'DarkGray'
+                }
             }
         }
 
