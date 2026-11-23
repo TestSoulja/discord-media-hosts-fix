@@ -14,6 +14,16 @@ Every release is a git tag `v<version>` (for example `v1.3.0`), and the release
 archive `discord-media-fix.zip` always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
 
+## [1.5.1] - 2026-11-23
+
+### Changed
+
+- The closing lines now offer the second way to start zapret: run this file
+  every day and the bypass is checked each time - config switching and
+  re-pinning happen on their own, at the cost of a slower start. The README
+  (EN/RU) compares both options side by side instead of deciding for the user.
+- That note is only text: the script's behaviour is unchanged.
+
 ## [1.5.0] - 2026-11-23
 
 ### Added

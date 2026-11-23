@@ -6,7 +6,7 @@ The script checks that no VPN is carrying the traffic, starts your zapret config
 
 > **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
 
-**Version 1.5.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
+**Version 1.5.1** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -68,6 +68,19 @@ All Discord media hosts answer - the pins are fine, hosts left as is.
 The bypass is up and the pins are fine - Discord is ready.
 This file is not a Discord launcher: open Discord from its usual shortcut.
 ```
+
+#### Want the bypass checked on every start?
+
+Two valid ways to start zapret — pick one:
+
+| | Everyday launcher (`general.bat`, shortcut) | This file |
+|---|---|---|
+| Start time | instant | 10–60 s: it probes before starting Discord |
+| If the provider changes and the config stops working | images break silently, you find out later | switches config by itself until one works |
+| If the pinned addresses rotate | nothing happens, you re-pin manually | re-probes and re-pins on the spot |
+| Restarts Discord | no | only when the address list changed |
+
+So: `general.bat` is faster, this file is more reliable. If media broke on you more than once, start zapret with `fix-discord-media.bat` — it never does damage on a healthy day, it just checks and says everything is fine.
 
 > **A VPN must be off for Discord.** The fix does not work while a VPN or a TUN-mode tunnel (for example Happ) is active: traffic leaves through the tunnel and the pinned direct addresses are not reachable, so images break again. Turn the VPN off, or exclude `*.discordapp.net` from the tunnel.
 
@@ -247,7 +260,7 @@ This is a versioned project, not a loose set of scripts.
 - Every release is a git tag `v<version>` and a GitHub release whose `discord-media-fix.zip` contains exactly the three working files.
 - Release checklist: bump `$AppVersion` → add a CHANGELOG entry → commit → tag `v<version>` → publish the release with the archive.
 
-The current release is **v1.5.0**.
+The current release is **v1.5.1**.
 
 ## License
 
@@ -319,6 +332,19 @@ All Discord media hosts answer - the pins are fine, hosts left as is.
 The bypass is up and the pins are fine - Discord is ready.
 This file is not a Discord launcher: open Discord from its usual shortcut.
 ```
+
+#### Хотите, чтобы обход проверялся при каждом запуске?
+
+Запускать zapret можно двумя способами — выберите один:
+
+| | Обычный запуск (`general.bat`, ярлык) | Этот файл |
+|---|---|---|
+| Время старта | мгновенно | 10–60 с: сначала проверка, потом Discord |
+| Провайдер сменил DPI, конфиг перестал работать | картинки тихо отваливаются, узнаёте позже | сам перебирает конфиги, пока один не заработает |
+| Адреса Cloudflare сменились | ничего не происходит, перепиннинг вручную | сразу перепроверяет и переписывает |
+| Перезапуск Discord | нет | только если список адресов изменился |
+
+Итого: `general.bat` — быстрее, этот файл — надёжнее. Если картинки уже отваливались не раз, запускайте zapret этим файлом: в здоровый день он ничего не портит, просто проверяет и говорит, что всё в порядке.
 
 > **VPN должен быть выключен.** С включённым VPN или туннелем (например, Happ в TUN-режиме) фикс не работает: трафик уходит через туннель, закреплённые адреса прямого подключения недоступны — картинки снова отвалятся. Выключите VPN или исключите `*.discordapp.net` из туннеля.
 
@@ -429,4 +455,4 @@ This config works - keeping it.
 - Каждый релиз — это тег `v<версия>` и релиз на GitHub, в архиве которого ровно три рабочих файла.
 - Порядок выпуска: поднять `$AppVersion` → добавить запись в CHANGELOG → коммит → тег `v<версия>` → опубликовать релиз с архивом.
 
-Текущий релиз — **v1.5.0**.
+Текущий релиз — **v1.5.1**.

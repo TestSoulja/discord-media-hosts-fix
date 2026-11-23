@@ -88,7 +88,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.5.0'
+$AppVersion = '1.5.1'
 
 $ErrorActionPreference = 'Stop'
 
@@ -1088,5 +1088,8 @@ Write-Step 'The pinned addresses stay in the hosts file, so they keep working af
 Write-Step 'Everyday use: start zapret the way you always did (general.bat or your shortcut),' 'Cyan'
 Write-Step 'then open Discord from its normal shortcut. You do not need this file every day.' 'Cyan'
 Write-Step 'Run this file again only when Discord images break: it re-probes and re-pins.' 'Gray'
+Write-Step 'Want the bypass checked on every start? Start zapret with this file instead:' 'Cyan'
+Write-Step 'it picks a working config by itself and re-pins if the addresses rotate.' 'Cyan'
+Write-Step 'That start is a little slower (10-60 s) - the check runs every time.' 'DarkGray'
 Write-Step 'A VPN must be off for Discord: this fix needs a direct connection with zapret.' 'Yellow'
 Write-Step 'Undo any time: remove-pins.bat' 'DarkGray'
