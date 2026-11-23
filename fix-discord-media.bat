@@ -1,6 +1,7 @@
 @echo off
 rem One entry point for the Discord media fix.
 rem Double-click this file: administrator rights are requested automatically.
+rem License: MIT, Copyright (c) 2026 TestSoulja - see LICENSE in the repository.
 rem Arguments are passed through, for example:
 rem   fix-discord-media.bat -DryRun
 rem   fix-discord-media.bat -Remove

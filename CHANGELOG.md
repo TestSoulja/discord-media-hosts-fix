@@ -14,6 +14,16 @@ Every release is a git tag `v<version>` (for example `v1.3.0`), and the release
 archive `discord-media-fix.zip` always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
 
+## [1.6.1] - 2026-11-23
+
+### Changed
+
+- License notice travels with the shipped copies: every file in the archive
+  (`fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`) now
+  carries `License: MIT, Copyright (c) 2026 TestSoulja` in its header, as the
+  MIT terms require for copies. Comments only - no behavior change, no fourth
+  file in the archive.
+
 ## [1.6.0] - 2026-11-23
 
 ### Added

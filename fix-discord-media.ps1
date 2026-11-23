@@ -65,6 +65,8 @@
   once below in $AppVersion, the tag is v<version>, and every change is written
   down in CHANGELOG.md. When releasing: bump $AppVersion, add a CHANGELOG entry,
   commit, tag v<version>, and attach the three files as discord-media-fix.zip.
+
+  License: MIT, Copyright (c) 2026 TestSoulja. See LICENSE in the repository.
 #>
 [CmdletBinding()]
 param(
@@ -92,7 +94,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.6.0'
+$AppVersion = '1.6.1'
 
 $ErrorActionPreference = 'Stop'
 

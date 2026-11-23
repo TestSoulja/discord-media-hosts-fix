@@ -1,6 +1,7 @@
 @echo off
 rem Undo: remove the discord-media-pin block from the hosts file.
 rem Double-click. Administrator rights are requested automatically.
+rem License: MIT, Copyright (c) 2026 TestSoulja - see LICENSE in the repository.
 setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
