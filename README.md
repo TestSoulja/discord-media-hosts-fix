@@ -10,7 +10,7 @@ The script starts your zapret config if it is not running, probes Cloudflare add
 
 ## Quick start
 
-**Easiest way:** open the [Releases page](https://github.com/TestSoulja/discord-media-fix/releases/latest), download `discord-media-fix.zip`, unpack it — and go to step 2.
+**Easiest way:** open the [Releases page](https://github.com/TestSoulja/discord-media-fix/releases/latest), download `discord-media-fix.zip`, unpack it — and go to step 2. The archive contains only the three files below, so copying them into your bundle overwrites nothing.
 
 **1. What to download** (three files):
 
@@ -22,7 +22,7 @@ The script starts your zapret config if it is not running, probes Cloudflare add
 
 All three are in this repository. Do not download only the `.bat`: it needs the `.ps1` in the same folder.
 
-**2. Where to put them:** into your zapret folder — the one that contains `service.bat` and `bin\winws.exe`. Put all three files there, next to `general.bat`:
+**2. Where to put them:** into your zapret folder — the one that contains `service.bat` and `bin\winws.exe`. Copy the three files there, next to `general.bat`:
 
 ```
 D:\zapret\
@@ -215,7 +215,7 @@ MIT. Do whatever you want, no warranty. See [LICENSE](LICENSE).
 
 ### Быстрый старт
 
-**Проще всего:** откройте [страницу релизов](https://github.com/TestSoulja/discord-media-fix/releases/latest), скачайте `discord-media-fix.zip`, распакуйте — и переходите к пункту 2.
+**Проще всего:** откройте [страницу релизов](https://github.com/TestSoulja/discord-media-fix/releases/latest), скачайте `discord-media-fix.zip`, распакуйте — и переходите к пункту 2. В архиве только три нужных файла, так что при копировании в сборку ничего не перезапишется.
 
 **1. Что скачать** — три файла:
 
@@ -227,7 +227,7 @@ MIT. Do whatever you want, no warranty. See [LICENSE](LICENSE).
 
 Скачивать один `.bat` нельзя: без `.ps1` в той же папке он не заработает.
 
-**2. Куда положить:** в папку своей сборки zapret — ту, где лежат `service.bat` и `bin\winws.exe`. Все три файла рядом с `general.bat`:
+**2. Куда положить:** в папку своей сборки zapret — ту, где лежат `service.bat` и `bin\winws.exe`. Скопируйте туда все три файла, рядом с `general.bat`:
 
 ```
 D:\zapret\
