@@ -77,7 +77,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.3.0'
+$AppVersion = '1.3.1'
 
 $ErrorActionPreference = 'Stop'
 
@@ -708,12 +708,9 @@ Write-Step 'IMPORTANT: do not close the minimized zapret window.' 'Red'
 Write-Step 'It keeps the bypass running - closing it breaks Discord media again.' 'Red'
 Write-Step ''
 
-if ($zapretConfig) {
-    $configName = Split-Path -Leaf $zapretConfig
-    Write-Step ("From now on start zapret with this file, not only with {0}:" -f $configName) 'Cyan'
-    Write-Step '  it starts the same config and re-pins the addresses when they stop working.' 'Cyan'
-}
-Write-Step 'Discord itself starts as usual, from its normal shortcut.' 'Cyan'
+Write-Step 'The pinned addresses stay in the hosts file, so they keep working after a reboot.' 'Green'
+Write-Step 'Everyday use: start zapret the way you always did (general.bat or your shortcut),' 'Cyan'
+Write-Step 'then open Discord from its normal shortcut. You do not need this file every day.' 'Cyan'
+Write-Step 'Run this file again only when Discord images break: it re-probes and re-pins.' 'Gray'
 Write-Step 'A VPN must be off for Discord: this fix needs a direct connection with zapret.' 'Yellow'
-Write-Step 'If media breaks again later, run this file again.' 'Gray'
 Write-Step 'Undo any time: remove-pins.bat' 'DarkGray'
