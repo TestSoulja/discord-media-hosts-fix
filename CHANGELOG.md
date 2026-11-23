@@ -14,6 +14,15 @@ Every release is a git tag `v<version>` (for example `v1.3.0`), and the release
 archive `discord-media-fix.zip` always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
 
+## [1.3.2] - 2026-11-23
+
+### Changed
+
+- The README now opens with a plain one-time-fix note: run it once, then keep
+  starting zapret with `general.bat` (or the usual shortcut) and open Discord
+  normally. It is not a Discord launcher and not an everyday step.
+- The console says the same in its first line.
+
 ## [1.3.1] - 2026-11-23
 
 ### Fixed

@@ -4,7 +4,9 @@ One-click fix for the situation when you already run **zapret** (DPI bypass), bu
 
 The script starts your zapret config if it is not running, probes Cloudflare addresses that serve the Discord media CDN, keeps the ones that actually answer, pins them in the Windows `hosts` file inside a marked block, and restarts Discord.
 
-**Version 1.3.1** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
+> **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
+
+**Version 1.3.2** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -45,7 +47,7 @@ D:\zapret\
 3. Wait 10–30 seconds while it probes addresses.
 4. Discord restarts by itself if the pins changed. Images load.
 
-You only do this once. The pinned addresses stay in the `hosts` file, so after that **start zapret the way you always did** — `general.bat`, `service.bat`, or your usual shortcut — and open Discord normally. This file is only needed again when images break: it re-probes and re-pins. Keep the minimized zapret window open: closing it stops the bypass.
+**That was the one-time part.** The pinned addresses stay in `hosts` after reboots. From now on start zapret the way you always did (`general.bat`, `service.bat`, or your shortcut) and open Discord normally. This file is only needed again when images break: it re-probes and re-pins. Keep the minimized zapret window open: closing it stops the bypass.
 
 ### Everyday use — this file is not a Discord launcher
 
@@ -234,7 +236,7 @@ This is a versioned project, not a loose set of scripts.
 - Every release is a git tag `v<version>` and a GitHub release whose `discord-media-fix.zip` contains exactly the three working files.
 - Release checklist: bump `$AppVersion` → add a CHANGELOG entry → commit → tag `v<version>` → publish the release with the archive.
 
-The current release is **v1.3.1**.
+The current release is **v1.3.2**.
 
 ## License
 
@@ -247,6 +249,8 @@ MIT. Do whatever you want, no warranty. See [LICENSE](LICENSE).
 Однокликовый фикс для случая, когда **zapret уже запущен, а картинки в Discord всё равно не грузятся** — «Не удалось загрузить изображение», пустые аватарки, нет стикеров, эмодзи и вложений, при этом текст и голос работают.
 
 Скрипт поднимает ваш конфиг zapret (если `winws.exe` не запущен), проверяет адреса Cloudflare, которые обслуживают медиа-CDN Discord, оставляет только те, что реально отвечают, и прописывает их в `hosts` Windows — в отдельном помеченном блоке. Потом перезапускает Discord.
+
+> **Это одноразовый фикс.** Запустить нужно один раз — и всё. Дальше запускайте zapret как раньше (`general.bat`, `service.bat` или ярлык) и открывайте Discord как обычно. Этот файл нужен снова только если картинки опять отвалились. Он **не** запускает Discord и **не** является ежедневным шагом. Подробнее — ниже, в разделе «Каждый день».
 
 ### Быстрый старт
 
@@ -283,7 +287,7 @@ D:\zapret\
 3. Подождите 10–30 секунд, пока проверяются адреса.
 4. Discord перезапустится сам, если пины изменились. Картинки загрузятся.
 
-Делается один раз. Закреплённые адреса остаются в `hosts`, поэтому дальше **запускайте zapret как раньше** — `general.bat`, `service.bat` или ярлыком — и открывайте Discord как обычно. Этот файл нужен снова только если картинки опять отвалились: он заново проверит адреса и перепишет блок. Свёрнутое окно zapret не закрывайте: закрыли — обход выключился.
+**Это и была одноразовая часть.** Закреплённые адреса остаются в `hosts` после перезагрузок. Дальше запускайте zapret как раньше — `general.bat`, `service.bat` или ярлыком — и открывайте Discord как обычно. Этот файл нужен снова только если картинки опять отвалились: он заново проверит адреса и перепишет блок. Свёрнутое окно zapret не закрывайте: закрыли — обход выключился.
 
 ### Каждый день — этот файл не запускает Discord
 
@@ -410,4 +414,4 @@ Enter = the default, q = cancel
 - Каждый релиз — это тег `v<версия>` и релиз на GitHub, в архиве которого ровно три рабочих файла.
 - Порядок выпуска: поднять `$AppVersion` → добавить запись в CHANGELOG → коммит → тег `v<версия>` → опубликовать релиз с архивом.
 
-Текущий релиз — **v1.3.1**.
+Текущий релиз — **v1.3.2**.

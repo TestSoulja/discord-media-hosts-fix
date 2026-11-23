@@ -77,7 +77,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.3.1'
+$AppVersion = '1.3.2'
 
 $ErrorActionPreference = 'Stop'
 
@@ -434,7 +434,7 @@ $zapretHome   = ''
 $zapretConfig = ''
 
 if (-not $NoZapret) {
-    Write-Step 'This file starts the zapret bypass - Discord is opened separately, as usual.' 'DarkGray'
+    Write-Step 'One-time fix: this file starts the zapret bypass, not Discord. After it, use your usual launcher.' 'DarkGray'
     $zapretHome = Find-ZapretDir -Path $ZapretDir
     if (-not $zapretHome) {
         Write-Step 'zapret folder not found.' 'Yellow'
