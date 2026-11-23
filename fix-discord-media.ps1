@@ -7,13 +7,20 @@
   media CDN is blocked by destination IP, and no DPI desync can help there -
   only a different destination address can.
 
-  So this script does two things in one run:
+  So this script does two things in one run, without asking anything:
 
-    1. makes sure your zapret bypass is up (starts the config if winws.exe is
-       not running yet), because the reachable addresses only answer while the
-       desync is active on some networks;
+    1. makes sure your zapret bypass is up AND working: starts a config if
+       winws.exe is not running, and if the Discord media hosts still do not
+       answer through it, stops that config and tries the next one until one
+       gets through (up to 5 configs). When TCP 443 does not connect to the
+       CDN at all, another config cannot help and the switching is skipped;
     2. pins the addresses that actually answer for the Discord media CDN into
        the Windows hosts file, inside a marked block, then restarts Discord.
+
+  Running the .bat is the whole interaction: elevation, config choice, the
+  bypass restart and the Discord restart are automatic. If nothing works, the
+  script says WHY (blocked by name or the addresses themselves are dropped)
+  and leaves hosts unchanged instead of pinning dead addresses.
 
   It works with any zapret bundle layout (winws.exe in bin\ or in the root),
   finds the folder automatically, and never edits the zapret config itself.
@@ -24,10 +31,10 @@
       fix-discord-media.bat -ShowConfigs    list your zapret configs
       fix-discord-media.bat -DryRun         show what would change
 
-  When zapret is not running yet, the script shows a numbered list of the
-  configs it found and asks which one to start (Enter = the default, which is
-  the last one you picked). The choice is remembered in
-  %LOCALAPPDATA%\discord-media-fix\last-config.txt.
+  When zapret is not running yet, the script starts the best config it found
+  (the last one that worked, else general.bat) and switches to the next config
+  only if media still does not answer. Nothing is asked. The config that
+  actually worked is remembered in %LOCALAPPDATA%\discord-media-fix\last-config.txt.
 
   Options:
       -Remove          delete the pin block and exit
@@ -35,13 +42,16 @@
       -DryRun          print the result, change nothing
       -Force           re-probe and re-pin even if everything already works
       -NoZapret        do not touch zapret, only pin hosts
+      -IgnoreVpn       continue even when a VPN carries the default route
+                       (by default the script stops and explains: pins cannot
+                       be reached through a tunnel)
       -ZapretDir PATH  zapret folder (auto-detected when omitted)
-      -Config NAME     config to start, e.g. "general (ALT11).bat"
-                       (relative to -ZapretDir, or a full path); skips the menu
-      -RestartZapret   stop the running winws.exe and start the chosen config
-                       (by default an already running zapret is left alone)
-      -Prompt          always ask, even when input looks redirected
-      -NoPrompt        never ask, just use the default / remembered config
+      -Config NAME     use only this config, no automatic switching,
+                       e.g. "general (ALT11).bat"
+      -RestartZapret   restart the bypass even when it already answers
+                       (by default a working bypass is left alone)
+      -Prompt          show the config menu instead of choosing automatically
+      -NoPrompt        never ask (automatic is already the default)
       -ShowConfigs     list the configs found in the zapret folder and exit
       -HostsFile PATH  alternate hosts file (for testing)
       -Hosts NAME...   hostnames to pin (default: the three Discord media hosts)
@@ -60,6 +70,7 @@ param(
     [switch]$DryRun,
     [switch]$Force,
     [switch]$NoZapret,
+    [switch]$IgnoreVpn,
     [switch]$ShowConfigs,
     [switch]$RestartZapret,
     [switch]$NoPrompt,
@@ -77,7 +88,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.3.2'
+$AppVersion = '1.4.0'
 
 $ErrorActionPreference = 'Stop'
 
@@ -98,6 +109,10 @@ if (-not $Hosts -or $Hosts.Count -eq 0) {
 
 $pinStart = '# >>> discord-media-pin (auto) >>>'
 $pinEnd   = '# <<< discord-media-pin (auto) <<<'
+
+# Adapter names/descriptions that mean "this is a tunnel, not the ISP link".
+$vpnPattern = '(?i)vpn|wireguard|wintun|tap-|tap windows|openvpn|nordlynx|amnezia|outline|happ|tailscale|zerotier|globalprotect|anyconnect|wan miniport|sstp|pptp|l2tp|warp|sing-box|clash|tun2socks|nekoray|v2ray|xray'
+
 
 $scriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $systemHosts  = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
@@ -133,6 +148,93 @@ function Test-Admin {
 
 function Test-Winws {
     return [bool](Get-Process -Name 'winws' -ErrorAction SilentlyContinue)
+}
+
+# Raw TCP connect, no SNI and no TLS: answers "is this address readable at all".
+# Uses .NET directly so it works on any PowerShell 5.1 and never hangs.
+function Test-TcpPort {
+    param([string]$Address, [int]$Port = 443, [int]$TimeoutMs = 6000)
+
+    $client = New-Object Net.Sockets.TcpClient
+    try {
+        $task = $client.ConnectAsync($Address, $Port)
+        if (-not $task.Wait($TimeoutMs)) { return $false }
+        return [bool]$client.Connected
+    }
+    catch { return $false }
+    finally { try { $client.Close() } catch { } }
+}
+
+# True when the running winws.exe belongs to a Windows service. Such a bypass is
+# managed by the service manager, so the script must not kill and replace it.
+function Test-ZapretService {
+    try {
+        $pids = @(Get-Process -Name 'winws' -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty Id)
+        if ($pids.Count -eq 0) { return $false }
+        $svc = Get-CimInstance Win32_Service -ErrorAction SilentlyContinue |
+            Where-Object { $pids -contains [int]$_.ProcessId }
+        return [bool]$svc
+    }
+    catch { return $false }
+}
+
+# Tunnels that are up right now, by name or by driver description.
+function Get-VpnAdapters {
+    try {
+        return @(Get-NetAdapter -ErrorAction Stop | Where-Object {
+            $_.Status -eq 'Up' -and
+            ($_.Name -match $vpnPattern -or $_.InterfaceDescription -match $vpnPattern)
+        })
+    }
+    catch { return @() }
+}
+
+# The adapter that actually carries the default route. If it is a tunnel, every
+# outbound connection goes through the VPN - pinned addresses included.
+function Get-VpnDefaultRoute {
+    try {
+        $routes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop |
+            Sort-Object RouteMetric)
+        foreach ($route in $routes) {
+            $adapter = Get-NetAdapter -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue
+            if (-not $adapter) { continue }
+            if ($adapter.Name -match $vpnPattern -or $adapter.InterfaceDescription -match $vpnPattern) {
+                return $adapter
+            }
+        }
+    }
+    catch { }
+    return $null
+}
+
+function Stop-Winws {
+    Get-Process -Name 'winws' -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    for ($i = 0; $i -lt 20 -and (Test-Winws); $i++) { Start-Sleep -Milliseconds 250 }
+}
+
+# Starts a zapret config and waits until winws.exe is there and had a moment to
+# attach WinDivert, otherwise the very first probe would run before filtering.
+function Start-ZapretConfig {
+    param([string]$Path)
+
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
+
+    Stop-Winws
+    Write-Step ("Starting the bypass: {0}" -f (Split-Path -Leaf $Path)) 'Gray'
+    Start-Process -FilePath $Path -WorkingDirectory (Split-Path -Parent $Path) | Out-Null
+
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and -not (Test-Winws)) {
+        Start-Sleep -Milliseconds 400
+    }
+    if (-not (Test-Winws)) {
+        Write-Step 'winws.exe did not appear within 30 s.' 'Yellow'
+        return $false
+    }
+    Start-Sleep -Seconds 3
+    return $true
 }
 
 function Test-ZapretFolder {
@@ -334,10 +436,12 @@ function Get-TextWithoutPin {
 
 # Probes the endpoint through curl.exe with -s (silent), so a timeout never
 # becomes a terminating NativeCommandError. Returns ok / dead / nocurl.
+# The timeout is generous on purpose: a throttled line needs more than 5 s.
 function Test-MediaEndpoint {
     param(
         [string]$ResolveTo = '',
-        [string]$HostName = 'media.discordapp.net'
+        [string]$HostName = 'media.discordapp.net',
+        [int]$TimeoutSec = 8
     )
 
     if (-not (Test-Path -LiteralPath $curlPath)) { return 'nocurl' }
@@ -345,7 +449,7 @@ function Test-MediaEndpoint {
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $curlArgs = @('-s', '-o', 'NUL', '-m', '5', '-w', '%{http_code}')
+        $curlArgs = @('-s', '-o', 'NUL', '-m', "$TimeoutSec", '-w', '%{http_code}')
         if ($ResolveTo) { $curlArgs += @('--resolve', "${HostName}:443:$ResolveTo") }
         $curlArgs += "https://$HostName/"
 
@@ -361,6 +465,97 @@ function Test-MediaEndpoint {
         $ErrorActionPreference = $saved
     }
 }
+
+# True as soon as one of the addresses answers for the Discord media host.
+# A single dead address means nothing - only "every seed dead" does.
+function Test-MediaAlive {
+    param(
+        [string[]]$Addresses,
+        [string]$HostName = 'media.discordapp.net',
+        [int]$Attempts = 1,
+        [int]$TimeoutSec = 5
+    )
+
+    if (-not $Addresses -or $Addresses.Count -eq 0) { return $false }
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        foreach ($ip in $Addresses) {
+            if ((Test-MediaEndpoint -ResolveTo $ip -HostName $HostName -TimeoutSec $TimeoutSec) -eq 'ok') {
+                return $true
+            }
+        }
+        if ($attempt -lt $Attempts) { Start-Sleep -Seconds 2 }
+    }
+    return $false
+}
+
+# Probes candidate addresses and keeps the ones that answer. Bounded in time:
+# at most $Limit addresses, each with its own timeout.
+function Get-AliveAddresses {
+    param(
+        [string[]]$Candidates,
+        [string]$HostName = 'media.discordapp.net',
+        [int]$Limit = 10,
+        [int]$TimeoutSec = 6,
+        [int]$Wanted = 4
+    )
+
+    $alive = New-Object System.Collections.Generic.List[string]
+    $tried = 0
+
+    foreach ($ip in $Candidates) {
+        if ($alive.Count -ge $Wanted -or $tried -ge $Limit) { break }
+        $tried++
+
+        $result = Test-MediaEndpoint -ResolveTo $ip -HostName $HostName -TimeoutSec $TimeoutSec
+        if ($result -eq 'ok') {
+            $alive.Add($ip)
+            Write-Step "  $ip  answers" 'Green'
+        }
+        elseif ($result -eq 'dead') {
+            Write-Step "  $ip  no answer" 'DarkGray'
+        }
+        else {
+            Write-Step "  $ip  skipped (no curl.exe)" 'DarkGray'
+        }
+    }
+    return @($alive)
+}
+
+# Distinguishes the two failure modes nobody should mix up:
+#   blackhole - TCP 443 itself does not connect, the addresses are dropped;
+#   name      - TCP connects, TLS to the Discord host dies, the block is by name.
+function Get-BlockDiagnosis {
+    param([string[]]$Addresses, [int]$TimeoutMs = 6000)
+
+    foreach ($ip in $Addresses) {
+        if (Test-TcpPort -Address $ip -TimeoutMs $TimeoutMs) { return 'name' }
+    }
+    return 'blackhole'
+}
+
+# Config order for the automatic start: the wanted one, then general.bat, then
+# every other general* config, then the rest.
+function Get-ConfigOrder {
+    param([object[]]$Configs, [string]$Preferred)
+
+    $order = New-Object System.Collections.Generic.List[string]
+    if ($Preferred) { $order.Add($Preferred) }
+    foreach ($c in @($Configs)) {
+        if ($c.Name -ieq 'general.bat' -and -not $order.Contains($c.FullName)) {
+            $order.Add($c.FullName)
+        }
+    }
+    foreach ($c in @($Configs)) {
+        if ($c.Name -match '(?i)general' -and -not $order.Contains($c.FullName)) {
+            $order.Add($c.FullName)
+        }
+    }
+    foreach ($c in @($Configs)) {
+        if (-not $order.Contains($c.FullName)) { $order.Add($c.FullName) }
+    }
+    return @($order)
+}
+
 
 function Start-Discord {
     param([string[]]$Names)
@@ -430,8 +625,46 @@ if ($isSystemFile -and -not (Test-Admin)) {
     exit 1
 }
 
+# ---------- VPN / TUN tunnel check ----------
+# The pins point at addresses reached through the ISP directly. Inside a tunnel
+# those addresses are not reachable, so the whole fix is pointless while a VPN
+# carries the traffic: the script says so instead of writing useless entries.
+$vpnDefault  = Get-VpnDefaultRoute
+$vpnAdapters = @(Get-VpnAdapters)
+if ($vpnDefault -and -not ($vpnAdapters | Where-Object { $_.ifIndex -eq $vpnDefault.ifIndex })) {
+    $vpnAdapters += $vpnDefault
+}
+$vpnNames = (@($vpnAdapters) | Select-Object -ExpandProperty Name -Unique) -join ', '
+
+if ($vpnDefault) {
+    Write-Step ''
+    if ($DryRun) {
+        Write-Step ("VPN carries the default route: {0}" -f $vpnNames) 'Yellow'
+        Write-Step 'With a VPN on, the pinned addresses are not reachable - turn it off for the real run.' 'Yellow'
+    }
+    elseif ($IgnoreVpn) {
+        Write-Step ("VPN carries the default route ({0}) - continuing because -IgnoreVpn was passed." -f $vpnNames) 'Yellow'
+    }
+    else {
+        Write-Step ("VPN or TUN tunnel is active: {0}" -f $vpnNames) 'Red'
+        Write-Step 'This fix needs a direct connection. Through a tunnel the pinned addresses are not' 'Yellow'
+        Write-Step 'reachable, images stay broken, and zapret cannot help either.' 'Yellow'
+        Write-Step ''
+        Write-Step 'Turn the VPN off and run this file again, or exclude *.discordapp.net from the tunnel.' 'Cyan'
+        Write-Step 'To try anyway, add -IgnoreVpn.' 'Gray'
+        exit 3
+    }
+}
+elseif ($vpnAdapters.Count -gt 0) {
+    Write-Step ''
+    Write-Step ("A tunnel adapter is up ({0}), but traffic does not go through it." -f $vpnNames) 'DarkGray'
+    Write-Step 'Fine for the fix. If Discord still fails, check that *discordapp.net is excluded from it.' 'DarkGray'
+}
+
 $zapretHome   = ''
 $zapretConfig = ''
+$configs      = @()
+$interactive  = $false
 
 if (-not $NoZapret) {
     Write-Step 'One-time fix: this file starts the zapret bypass, not Discord. After it, use your usual launcher.' 'DarkGray'
@@ -478,15 +711,10 @@ if (-not $NoZapret) {
             }
         }
         else {
-            # Ask only when something is actually going to be started.
-            $willStart = $RestartZapret -or -not (Test-Winws)
-            $interactive = $false
-            if ($willStart) {
-                if ($Prompt) { $interactive = $true }
-                elseif (-not $NoPrompt) {
-                    try { $interactive = -not [Console]::IsInputRedirected } catch { $interactive = $true }
-                }
-            }
+            # Automatic by default: no menu, no questions, the script starts the
+            # remembered config and switches on its own if that one fails.
+            # -Prompt brings the interactive picker back.
+            $interactive = [bool]$Prompt
 
             if ($interactive) {
                 $picked = Select-ZapretConfig -Configs $configs -Default $defaultConfig
@@ -504,45 +732,96 @@ if (-not $NoZapret) {
 
         if ($zapretConfig) {
             Write-Step ("Config: {0}" -f (Split-Path -Leaf $zapretConfig)) 'Gray'
-            if (-not $DryRun) { Save-Choice (Split-Path -Leaf $zapretConfig) }
+            # In automatic mode the choice is remembered only after it is proven
+            # to work, below; a manual pick from the menu is remembered here.
+            if ($interactive -and -not $DryRun) { Save-Choice (Split-Path -Leaf $zapretConfig) }
         }
     }
 }
 
-# ---------- bring the bypass up ----------
-if ($zapretConfig) {
-    $configName = Split-Path -Leaf $zapretConfig
-    $winws = Test-Winws
+# ---------- bring the bypass up and make sure it actually works ----------
+# Everything here is automatic: start, wait, probe, and if media still does not
+# get through, restart with the next config. Skipped when TCP 443 already fails
+# on every seed address - no desync strategy can open a dead route.
+$bypassUp     = $false
+$bypassConfig = ''
+$lastStarted  = ''
 
-    if ($winws -and -not $RestartZapret) {
-        Write-Step 'zapret (winws) is already running - using it.' 'DarkGray'
-        Write-Step 'Use -RestartZapret to switch it to the chosen config.' 'DarkGray'
-    }
-    elseif ($winws -and $DryRun) {
-        Write-Step ("Dry run: would stop winws and start {0}" -f $configName) 'DarkGray'
-    }
-    elseif ($DryRun) {
-        Write-Step ("Dry run: would start {0}" -f $configName) 'DarkGray'
+if ($zapretConfig) {
+    $seed = @($preferred | Select-Object -First 4)
+
+    if ($DryRun) {
+        Write-Step ("Dry run: would start {0} and probe through it." -f (Split-Path -Leaf $zapretConfig)) 'DarkGray'
+        $bypassUp = $true
     }
     else {
-        if ($winws) {
-            Write-Step 'Stopping the running winws.exe to switch config...' 'Gray'
-            Get-Process -Name 'winws' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 1000
+        $healthy = $false
+
+        if ((Test-Winws) -and -not $RestartZapret) {
+            Write-Step 'zapret (winws) is already running - checking media through it.' 'DarkGray'
+            $healthy = Test-MediaAlive -Addresses $seed -Attempts 2
+            if ($healthy) {
+                $bypassUp = $true
+                Write-Step 'The running bypass gets media through.' 'Green'
+            }
+            else {
+                Write-Step 'Media does not answer through it - the bypass will be restarted.' 'Yellow'
+            }
         }
 
-        Write-Step ("Starting the bypass: {0}" -f $configName) 'Gray'
-        Start-Process -FilePath $zapretConfig -WorkingDirectory $zapretHome | Out-Null
+        if (-not $healthy) {
+            $serviceMode = Test-ZapretService
+            if ($serviceMode) {
+                Write-Step 'zapret runs as a Windows service - the script will not restart it.' 'Yellow'
+                Write-Step 'Restart the service yourself if you want another config.' 'Yellow'
+            }
+            else {
+                $order = @(Get-ConfigOrder -Configs $configs -Preferred $zapretConfig)
+                # -Config means "use exactly this one": no automatic switching.
+                $limit = [Math]::Min($order.Count, 5)
+                if ($Config) { $limit = [Math]::Min($order.Count, 1) }
 
-        $deadline = (Get-Date).AddSeconds(45)
-        while ((Get-Date) -lt $deadline -and -not (Test-Winws)) {
-            Start-Sleep -Milliseconds 500
+                for ($i = 0; $i -lt $limit; $i++) {
+                    $candidate = $order[$i]
+                    Write-Step ''
+                    Write-Step ("Config {0}/{1}: {2}" -f ($i + 1), $limit, (Split-Path -Leaf $candidate)) 'Cyan'
+
+                    if (-not (Start-ZapretConfig -Path $candidate)) { continue }
+                    $lastStarted = $candidate
+
+                    if (Test-MediaAlive -Addresses $seed -Attempts 2) {
+                        $bypassUp = $true
+                        $bypassConfig = $candidate
+                        Save-Choice (Split-Path -Leaf $candidate)
+                        Write-Step 'This config works - keeping it.' 'Green'
+                        break
+                    }
+
+                    Write-Step ("{0} does not get media through." -f (Split-Path -Leaf $candidate)) 'Yellow'
+
+                    # If even TCP 443 never connects, another config cannot fix it.
+                    if ((Get-BlockDiagnosis -Addresses $seed) -eq 'blackhole') {
+                        Write-Step 'TCP 443 does not connect to the CDN at all - switching configs would not help.' 'Yellow'
+                        Write-Step 'Keeping the bypass up for chat and voice.' 'Yellow'
+                        break
+                    }
+                }
+            }
         }
-        if (Test-Winws) {
-            Write-Step 'winws.exe is running.' 'Green'
+
+        if ($bypassUp) {
+            Write-Step ''
             Write-Step 'Do not close the minimized zapret window - it keeps the bypass up.' 'Red'
         }
-        else { Write-Step 'winws.exe did not appear within 45 s - check its window, pressing on anyway.' 'Yellow' }
+        elseif ($serviceMode) {
+            Write-Step ''
+            Write-Step 'The service keeps the bypass up; media is still probed and pinned below.' 'Yellow'
+        }
+        elseif ($configs.Count -gt 0) {
+            Write-Step ''
+            Write-Step 'No tried config got the media hosts through.' 'Yellow'
+            Write-Step 'The addresses are still probed and pinned below.' 'Yellow'
+        }
     }
 }
 
@@ -554,7 +833,9 @@ $needFix = $true
 if ($isSystemFile -and -not $Force) {
     $dead = @()
     foreach ($name in $Hosts) {
-        if ((Test-MediaEndpoint -HostName $name) -ne 'ok') { $dead += $name }
+        $ok = (Test-MediaEndpoint -HostName $name -TimeoutSec 8) -eq 'ok'
+        if (-not $ok) { $ok = (Test-MediaEndpoint -HostName $name -TimeoutSec 10) -eq 'ok' }
+        if (-not $ok) { $dead += $name }
     }
 
     if ($dead.Count -eq 0) {
@@ -578,33 +859,48 @@ if ($needFix) {
     }
     $candidates = @($candidates | Where-Object { $_ } | Select-Object -Unique)
 
-    $alive = @()
-    $tried = 0
-    $probeLimit = 20
-
-    foreach ($ip in $candidates) {
-        if ($alive.Count -ge 4 -or $tried -ge $probeLimit) { break }
-        $tried++
-
-        $result = Test-MediaEndpoint -ResolveTo $ip
-        if ($result -eq 'ok') {
-            $alive += $ip
-            Write-Step "  $ip  answers" 'Green'
-        }
-        elseif ($result -eq 'dead') {
-            Write-Step "  $ip  no answer" 'DarkGray'
-        }
-        else {
-            Write-Step "  $ip  skipped (no curl.exe)" 'DarkGray'
-        }
-    }
+    $alive = @(Get-AliveAddresses -Candidates $candidates -HostName 'media.discordapp.net' -Limit 8 -TimeoutSec 6)
 
     if ($alive.Count -eq 0 -and (Test-Path -LiteralPath $curlPath)) {
         Write-Step ''
+        Write-Step 'Nothing on the first pass - retrying slowly, throttled lines need longer.' 'Gray'
+        $retry = @($candidates | Select-Object -First 4)
+        $alive = @(Get-AliveAddresses -Candidates $retry -HostName 'media.discordapp.net' -Limit 4 -TimeoutSec 12 -Wanted 2)
+    }
+
+    if ($alive.Count -eq 0 -and (Test-Path -LiteralPath $curlPath)) {
+        # Tell the two failures apart instead of blaming the whole Cloudflare range.
+        $reason = Get-BlockDiagnosis -Addresses @($candidates | Select-Object -First 3)
+        Write-Step ''
         Write-Step 'No address answered.' 'Red'
-        Write-Step 'zapret is not up, or the whole Cloudflare range is blocked on this network.' 'Yellow'
-        Write-Step 'Start your zapret config and run this file again, or use a VPN for Discord.' 'Yellow'
-        Write-Step 'hosts was left unchanged.' 'Yellow'
+
+        if ($reason -eq 'blackhole') {
+            Write-Step 'TCP 443 does not connect to any of them: this network drops the CDN' 'Yellow'
+            Write-Step 'addresses (or throttles them so hard the connection never opens).' 'Yellow'
+            Write-Step 'Rotating hosts entries cannot help - the addresses are unreachable, not the names.' 'Yellow'
+            Write-Step ''
+            Write-Step 'What works here: a tunnel for Discord only - a VPN with split tunneling' 'Cyan'
+            Write-Step 'for 162.159.128.0/18 - or a proxy configured just for Discord.' 'Cyan'
+        }
+        else {
+            $cfgName = ''
+            if ($bypassConfig) { $cfgName = " ({0})" -f (Split-Path -Leaf $bypassConfig) }
+            Write-Step 'TCP connects, but TLS to media.discordapp.net fails on every address:' 'Yellow'
+            Write-Step 'the block is by name, not by address, so re-pinning cannot fix it.' 'Yellow'
+            if ($bypassUp -and -not $DryRun) {
+                Write-Step ("The bypass is up{0}, but this DPI is stronger than its desync strategy." -f $cfgName) 'Yellow'
+            }
+            Write-Step ''
+            Write-Step 'Next step: try other zapret configs - fix-discord-media.bat -ShowConfigs,' 'Cyan'
+            Write-Step 'then -Config "general (ALT...).bat". If none work, the same tunnel/proxy' 'Cyan'
+            Write-Step 'for Discord is the only reliable way.' 'Cyan'
+        }
+
+        Write-Step ''
+        Write-Step 'hosts was left unchanged - no dead address was pinned.' 'Yellow'
+        if ($lastStarted -and -not $bypassUp) {
+            Write-Step ("Last started config: {0}. If other sites got slower, start your usual one." -f (Split-Path -Leaf $lastStarted)) 'Gray'
+        }
         exit 2
     }
 
@@ -703,10 +999,15 @@ if ($needFix -and -not ($NoRestart -or $DryRun)) {
 
 if ($DryRun) { return }
 
+if (Test-Winws) {
+    Write-Step ''
+    Write-Step 'IMPORTANT: do not close the minimized zapret window.' 'Red'
+    Write-Step 'It keeps the bypass running - closing it breaks Discord media again.' 'Red'
+}
 Write-Step ''
-Write-Step 'IMPORTANT: do not close the minimized zapret window.' 'Red'
-Write-Step 'It keeps the bypass running - closing it breaks Discord media again.' 'Red'
-Write-Step ''
+if ($bypassConfig) {
+    Write-Step ("Bypass config in use: {0} (remembered for the next run)." -f (Split-Path -Leaf $bypassConfig)) 'Green'
+}
 
 Write-Step 'The pinned addresses stay in the hosts file, so they keep working after a reboot.' 'Green'
 Write-Step 'Everyday use: start zapret the way you always did (general.bat or your shortcut),' 'Cyan'

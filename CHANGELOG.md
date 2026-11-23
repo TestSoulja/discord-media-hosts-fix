@@ -14,6 +14,40 @@ Every release is a git tag `v<version>` (for example `v1.3.0`), and the release
 archive `discord-media-fix.zip` always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
 
+## [1.4.0] - 2026-11-23
+
+### Added
+
+- **VPN / TUN check before anything is changed.** If the default route goes
+  through a tunnel, the script stops with exit code `3`, leaves `hosts`
+  untouched and explains that the pinned addresses are unreachable that way;
+  `-IgnoreVpn` continues anyway. A tunnel adapter that is up but does not carry
+  the default route only gets a note, so split tunneling stays usable.
+- **Automatic config fallback.** When the started config does not get the media
+  hosts through, the bypass is restarted with the next config (up to 5,
+  `general.bat` first) and the config that worked is remembered.
+- **Failure diagnosis** from a raw TCP 443 probe: "blocked by name" (TCP
+  connects, TLS dies) is now clearly separated from "the addresses themselves
+  are dropped" (TCP never connects), so the advice matches the real block.
+- `-IgnoreVpn`.
+
+### Changed
+
+- No questions in the normal run: the config menu is gone by default. `-Prompt`
+  brings it back, `-Config` pins one config and disables the switching.
+- The bypass is restarted when it is running but media does not answer through
+  it; a working bypass is still left alone unless `-RestartZapret` is passed.
+- A zapret installed as a Windows service is never killed and replaced.
+- Timeouts are longer (`8 s`, then a slow retry with `12 s`) and the first probe
+  waits until WinDivert has attached.
+- "No address answered" is no longer blamed on the whole Cloudflare range.
+
+### Fixed
+
+- False "no answer" for every address on throttled networks: the old 5 s
+  timeout, no retry and probes fired before the bypass was filtering.
+- Misleading advice in the failure path.
+
 ## [1.3.2] - 2026-11-23
 
 ### Changed

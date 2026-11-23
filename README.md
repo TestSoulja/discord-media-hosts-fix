@@ -2,11 +2,11 @@
 
 One-click fix for the situation when you already run **zapret** (DPI bypass), but Discord still **does not load images** — "Failed to load image", empty avatars, no stickers, emoji or attachments, while text and voice work normally.
 
-The script starts your zapret config if it is not running, probes Cloudflare addresses that serve the Discord media CDN, keeps the ones that actually answer, pins them in the Windows `hosts` file inside a marked block, and restarts Discord.
+The script checks that no VPN is carrying the traffic, starts your zapret config if it is not running, restarts it with the next config if media still does not answer, probes Cloudflare addresses that serve the Discord media CDN, keeps the ones that actually answer, pins them in the Windows `hosts` file inside a marked block, and restarts Discord.
 
 > **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
 
-**Version 1.3.2** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
+**Version 1.4.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -43,11 +43,12 @@ D:\zapret\
 **3. Run:** double-click `fix-discord-media.bat`.
 
 1. Windows asks for administrator rights — click **Yes**.
-2. If zapret is not running, pick a config from the list (number + Enter).
-3. Wait 10–30 seconds while it probes addresses.
-4. Discord restarts by itself if the pins changed. Images load.
+2. Wait 10–60 seconds: it starts zapret, checks the media CDN, and switches to another config by itself if the first one does not get through. No questions.
+3. Discord restarts by itself if the pins changed. Images load.
 
 **That was the one-time part.** The pinned addresses stay in `hosts` after reboots. From now on start zapret the way you always did (`general.bat`, `service.bat`, or your shortcut) and open Discord normally. This file is only needed again when images break: it re-probes and re-pins. Keep the minimized zapret window open: closing it stops the bypass.
+
+If a VPN is on, the script stops before changing anything and tells you why — the pins cannot be reached through a tunnel. Turn the VPN off, or exclude `*.discordapp.net` from it.
 
 ### Everyday use — this file is not a Discord launcher
 
@@ -97,14 +98,17 @@ The only thing that works is a **different destination address** that serves the
 
 ## What the script does
 
-1. Finds your zapret folder and your config (`general.bat`, `general (ALT11).bat`, …).
-2. Starts that config on every run and waits for `winws.exe` (an already running one is reused).
-3. Checks the three Discord media hosts through the running bypass. If all answer, `hosts` is left alone — that is the normal second and later run.
-4. Otherwise probes a shortlist of Cloudflare edge addresses, then scans the wider range, keeping up to 4 that answer.
-5. Writes them into `hosts`, once per hostname — 12 lines in a marked block.
-6. Flushes the DNS cache and restarts the Discord client that was running (Stable / PTB / Canary / Development).
+1. Refuses to run while a VPN or TUN tunnel carries the default route (exit code `3`): pinned addresses are not reachable through a tunnel, so nothing would be fixed.
+2. Finds your zapret folder and your configs (`general.bat`, `general (ALT11).bat`, …).
+3. Starts the remembered config (or `general.bat`), waits for `winws.exe`, then waits a few seconds so WinDivert really attaches before the first probe.
+4. Checks four seed addresses of `media.discordapp.net` through the bypass. If they answer, that config stays.
+5. If they do not, stops the bypass and starts the next config (up to 5) and checks again. When even TCP 443 does not connect, no desync can help and the switching stops.
+6. Checks the three Discord media hosts. If all answer, `hosts` is left alone — that is the normal second and later run.
+7. Otherwise probes Cloudflare edge addresses: 8 fast tries, then 4 slow retries with a longer timeout, keeping up to 4 that answer.
+8. Writes them into `hosts`, once per hostname — 12 lines in a marked block.
+9. Flushes the DNS cache and restarts the Discord client that was running (Stable / PTB / Canary / Development).
 
-If no address answers, nothing is written and the script exits with code `2`. It never pins a dead address, and it never edits zapret's configs, lists or `service.bat`.
+If no address answers, nothing is written and the script exits with code `2` — after saying which block it is: by name (TCP connects, TLS dies) or by address (TCP 443 never connects). It never pins a dead address, and it never edits zapret's configs, lists or `service.bat`. A zapret installed as a Windows service is never killed and replaced.
 
 ## Requirements
 
@@ -131,12 +135,13 @@ Options (pass them through the `.bat` or call the `.ps1` from an elevated PowerS
 | `-DryRun` | print the resulting `hosts`, change nothing |
 | `-NoRestart` | do not touch the Discord client |
 | `-NoZapret` | do not look for or start zapret, only pin hosts |
+| `-IgnoreVpn` | continue even when a VPN carries the default route |
 | `-ZapretDir <path>` | zapret folder (auto-detected when omitted) |
-| `-Config <name>` | start this config and skip the menu, for example `"general (ALT11).bat"` |
-| `-RestartZapret` | stop the running `winws.exe` and start the chosen config |
+| `-Config <name>` | use only this config, no automatic switching, for example `"general (ALT11).bat"` |
+| `-RestartZapret` | restart the bypass even if it already answers |
 | `-ShowConfigs` | list configs found in the zapret folder and exit |
-| `-Prompt` | always show the config menu, even when input looks redirected |
-| `-NoPrompt` | never show the menu, just use the default / remembered config |
+| `-Prompt` | show the config menu instead of choosing automatically |
+| `-NoPrompt` | never ask (automatic is already the default) |
 | `-HostsFile <path>` | alternate `hosts` file (for testing) |
 | `-Hosts <name...>` | hostnames to pin (default: the three Discord media hosts) |
 | `-ExtraIPs <ip...>` | additional candidate addresses to probe first |
@@ -157,24 +162,21 @@ fix-discord-media.bat -NoZapret
 
 ## Choosing the config
 
-When `winws.exe` is not running yet, the script lists every config it found and asks which one to start:
+Nothing to choose by hand: the script starts the config that worked last time, or `general.bat`, and moves on to the next config only if the media hosts still do not answer through it.
 
 ```
-Configs found:
-  [1] general (ALT.1).bat
-  [2] general (ALT11).bat
-  [3] general.bat   <- default
-
-Which zapret config should be started?
-Enter = the default, q = cancel
-  Number: _
+Config 1/5: general.bat
+Starting the bypass: general.bat
+This config works - keeping it.
 ```
 
-- Enter uses the default; `q` cancels and changes nothing.
-- The choice is remembered in `%LOCALAPPDATA%\discord-media-fix\last-config.txt`, so the next run offers it as the default.
-- `-Config "name.bat"` skips the menu entirely.
-- If zapret is already running, the script reuses it and does not ask. Add `-RestartZapret` to stop it and start the config you picked.
-- `-ShowConfigs` prints the same numbered list and exits without doing anything.
+- The config that actually worked is remembered in `%LOCALAPPDATA%\discord-media-fix\last-config.txt` and is tried first next time.
+- Order: the remembered config, then `general.bat`, then other `general*` configs, then the rest. Up to 5 are tried.
+- Switching stops early when TCP 443 does not connect to the CDN at all: that is not something another desync strategy can fix.
+- `-Config "name.bat"` uses exactly that config and disables switching.
+- `-Prompt` brings the old numbered menu back; `-ShowConfigs` prints the list and exits.
+- If zapret is already running and media answers through it, it is left alone. `-RestartZapret` restarts it anyway.
+- A zapret installed as a Windows service is not touched: restart the service yourself if you want another config.
 
 ## Where it looks for zapret
 
@@ -185,7 +187,7 @@ In this order, first match wins:
 3. its parent folder;
 4. `%USERPROFILE%\zapret`, `C:\zapret`, `D:\zapret`, `C:\dis`, `D:\dis`.
 
-A folder counts as a zapret folder when it contains `bin\winws.exe`, `winws.exe` or `service.bat`. Configs are picked as: the one you chose last time, then `general.bat`, then any `general*.bat`, then the first other `.bat`. `service.bat`, installers and helper scripts are skipped.
+A folder counts as a zapret folder when it contains `bin\winws.exe`, `winws.exe` or `service.bat`. Configs are picked as: the one that worked last time, then `general.bat`, then any `general*.bat`, then the rest; up to 5 are tried. `service.bat`, installers and helper scripts are skipped.
 
 ## What exactly is changed on the machine
 
@@ -210,8 +212,9 @@ Safety details:
 ## Limitations
 
 - The addresses are Cloudflare anycast IPs and can rotate. If media breaks again months later, run the script again — it re-probes.
-- **Does not work with a VPN or TUN tunnel enabled.** The pinned addresses are reached directly through your ISP; inside a tunnel they are not available. zapret itself also does not work through a VPN.
-- If the block covers every address in the range, no `hosts` entry can help: this method is done, use a full VPN for Discord instead.
+- **Does not work with a VPN or TUN tunnel enabled.** The pinned addresses are reached directly through your ISP; inside a tunnel they are not available, and zapret itself also does not work through a VPN. The script checks this itself: if the default route goes through a tunnel it stops with exit code `3` and writes nothing. A tunnel that is up but does not carry the default route (split tunneling) is fine and only gets a note. `-IgnoreVpn` forces a run.
+- If the block covers every address in the range, no `hosts` entry can help: this method is done, use a tunnel or a proxy for Discord instead.
+- If the block is by name (not by address), the pins are not the cure either — another zapret config or a tunnel is. The script tells these two cases apart and says which one you hit.
 - The fix is per hostname and per machine. It is not a VPN and does not hide traffic.
 - IPv6-only networks that resolve the CDN over IPv6 are out of scope: the block pins IPv4 addresses.
 
@@ -219,13 +222,20 @@ Safety details:
 
 **"All Discord media hosts answer — the pins are fine, hosts left as is"** — the script checked all three hosts through the running bypass and each one responded, so it left `hosts` alone on purpose. That is the normal state on the second and later runs. If Discord still shows broken images, close it completely (tray icon too) and open it again: a running client keeps its old addresses until restart. To re-probe and re-pin anyway, run with `-Force`. With a VPN on, this check can also pass while Discord still fails.
 
-**"No address answered"** — zapret is not actually up, or the network drops TLS to the whole Cloudflare range. Check the zapret window, try another config with `-Config`, or use a VPN.
+**"VPN or TUN tunnel is active" (exit code `3`)** — the default route goes through a tunnel, so the pinned addresses are unreachable. Turn the VPN off and run the file again, exclude `*.discordapp.net` from the tunnel, or pass `-IgnoreVpn` if you know the tunnel does not carry Discord traffic.
+
+**"No address answered"** — followed by one of two lines:
+
+- *"TCP connects, but TLS … fails on every address"* — the block is by name: DPI kills the handshake for `media.discordapp.net` whatever the address. Re-pinning cannot fix it. Try other zapret configs (`-ShowConfigs`, then `-Config "general (ALT...).bat"`); if none work, the way out is a tunnel or a proxy for Discord.
+- *"TCP 443 does not connect to any of them"* — the addresses themselves are dropped or throttled into uselessness. No config helps either; the way out is a tunnel for Discord only (VPN with split tunneling for `162.159.128.0/18`) or a proxy.
+
+In both cases `hosts` is left unchanged on purpose: no dead address is pinned.
 
 **"Could not write hosts"** — usually Microsoft Defender *Controlled folder access*. Allow the change for a minute, or add `powershell.exe` as an allowed app.
 
 **The block was written but images still fail** — close Discord completely (tray icon too) and open it again; a running client only re-resolves hostnames on restart.
 
-**zapret is already running under a different config** — the script reuses the running `winws.exe` and does not touch it. Stop it first if you want a different config started.
+**zapret is already running under a different config** — if media answers through it, it is left alone; if not, the script restarts it with the next config. `-RestartZapret` forces a restart, `-Config` pins one config.
 
 ## Versioning and releases
 
@@ -236,7 +246,7 @@ This is a versioned project, not a loose set of scripts.
 - Every release is a git tag `v<version>` and a GitHub release whose `discord-media-fix.zip` contains exactly the three working files.
 - Release checklist: bump `$AppVersion` → add a CHANGELOG entry → commit → tag `v<version>` → publish the release with the archive.
 
-The current release is **v1.3.2**.
+The current release is **v1.4.0**.
 
 ## License
 
@@ -248,7 +258,7 @@ MIT. Do whatever you want, no warranty. See [LICENSE](LICENSE).
 
 Однокликовый фикс для случая, когда **zapret уже запущен, а картинки в Discord всё равно не грузятся** — «Не удалось загрузить изображение», пустые аватарки, нет стикеров, эмодзи и вложений, при этом текст и голос работают.
 
-Скрипт поднимает ваш конфиг zapret (если `winws.exe` не запущен), проверяет адреса Cloudflare, которые обслуживают медиа-CDN Discord, оставляет только те, что реально отвечают, и прописывает их в `hosts` Windows — в отдельном помеченном блоке. Потом перезапускает Discord.
+Скрипт проверяет, что трафик не уходит в VPN, поднимает ваш конфиг zapret (если `winws.exe` не запущен), при необходимости сам перезапускает его со следующим конфигом, проверяет адреса Cloudflare, которые обслуживают медиа-CDN Discord, оставляет только те, что реально отвечают, и прописывает их в `hosts` Windows — в отдельном помеченном блоке. Потом перезапускает Discord.
 
 > **Это одноразовый фикс.** Запустить нужно один раз — и всё. Дальше запускайте zapret как раньше (`general.bat`, `service.bat` или ярлык) и открывайте Discord как обычно. Этот файл нужен снова только если картинки опять отвалились. Он **не** запускает Discord и **не** является ежедневным шагом. Подробнее — ниже, в разделе «Каждый день».
 
@@ -283,11 +293,12 @@ D:\zapret\
 **3. Запуск:** двойной клик по `fix-discord-media.bat`.
 
 1. Windows спросит права администратора — **Да**.
-2. Если zapret не запущен, выберите конфиг из списка (номер + Enter).
-3. Подождите 10–30 секунд, пока проверяются адреса.
-4. Discord перезапустится сам, если пины изменились. Картинки загрузятся.
+2. Подождите 10–60 секунд: скрипт запустит zapret, проверит медиа-CDN и сам переключится на другой конфиг, если через первый ничего не проходит. Вопросов не задаёт.
+3. Discord перезапустится сам, если пины изменились. Картинки загрузятся.
 
 **Это и была одноразовая часть.** Закреплённые адреса остаются в `hosts` после перезагрузок. Дальше запускайте zapret как раньше — `general.bat`, `service.bat` или ярлыком — и открывайте Discord как обычно. Этот файл нужен снова только если картинки опять отвалились: он заново проверит адреса и перепишет блок. Свёрнутое окно zapret не закрывайте: закрыли — обход выключился.
+
+Если включён VPN, скрипт остановится до любых изменений и объяснит почему: через туннель закреплённые адреса недоступны. Выключите VPN или исключите `*.discordapp.net` из туннеля.
 
 ### Каждый день — этот файл не запускает Discord
 
@@ -346,36 +357,33 @@ TCP-хендшейк проходит, а дальше соединение ум
 
 ```bat
 fix-discord-media.bat -ZapretDir "D:\zapret"              :: сборка лежит в другом месте
-fix-discord-media.bat -Config "general (ALT11).bat"       :: запускать конкретный конфиг
+fix-discord-media.bat -Config "general (ALT11).bat"       :: только этот конфиг, без переключения
 fix-discord-media.bat -NoZapret                           :: только пиннинг, zapret не трогать
 fix-discord-media.bat -Force -NoRestart                   :: прописать и не перезапускать Discord
+fix-discord-media.bat -IgnoreVpn                          :: запустить даже при активном VPN
 ```
 
 ### Выбор конфига
 
-Когда `winws.exe` ещё не запущен, скрипт показывает все найденные конфиги и спрашивает, какой запускать:
+Выбирать руками ничего не нужно: скрипт запускает конфиг, который сработал в прошлый раз (или `general.bat`), и переходит к следующему только если через него медиа-хосты не отвечают.
 
 ```
-Configs found:
-  [1] general (ALT.1).bat
-  [2] general (ALT11).bat
-  [3] general.bat   <- default
-
-Which zapret config should be started?
-Enter = the default, q = cancel
-  Number: _
+Config 1/5: general.bat
+Starting the bypass: general.bat
+This config works - keeping it.
 ```
 
-- Enter — взять конфиг по умолчанию, `q` — отменить, ничего не меняя.
-- Выбор запоминается в `%LOCALAPPDATA%\discord-media-fix\last-config.txt`, и в следующий раз он предлагается как конфиг по умолчанию.
-- `-Config "имя.bat"` — пропустить меню.
-- Если zapret уже запущен, скрипт его не трогает и не спрашивает. Добавьте `-RestartZapret`, чтобы остановить текущий и запустить выбранный.
-- `-ShowConfigs` — показать нумерованный список и выйти.
-- `-NoPrompt` — никогда не спрашивать (для скриптов и автоматизации), `-Prompt` — спрашивать всегда.
+- Конфиг, который реально сработал, запоминается в `%LOCALAPPDATA%\discord-media-fix\last-config.txt` и в следующий раз пробуется первым.
+- Порядок: запомненный конфиг, затем `general.bat`, затем остальные `general*`, затем все прочие. Пробуется максимум 5.
+- Перебор прекращается, если TCP 443 вообще не соединяется с CDN: это не лечится другой стратегией desync.
+- `-Config "имя.bat"` — строго этот конфиг, без переключения.
+- `-Prompt` — вернуть старое меню с номерами; `-ShowConfigs` — показать список и выйти.
+- Если zapret уже запущен и медиа через него работает, его не трогают. `-RestartZapret` перезапускает принудительно.
+- zapret, установленный службой Windows, не трогается: перезапустите службу сами, если нужен другой конфиг.
 
 ### Где скрипт ищет zapret
 
-По порядку, что найдётся первым: `-ZapretDir`; папка самого скрипта; её родитель; `%USERPROFILE%\zapret`, `C:\zapret`, `D:\zapret`, `C:\dis`, `D:\dis`. Папка считается сборкой zapret, если в ней есть `bin\winws.exe`, `winws.exe` или `service.bat`. Конфиг выбирается так: `general.bat`, затем любой `general*.bat`, затем первый попавшийся `.bat` (служебные вроде `service.bat` пропускаются).
+По порядку, что найдётся первым: `-ZapretDir`; папка самого скрипта; её родитель; `%USERPROFILE%\zapret`, `C:\zapret`, `D:\zapret`, `C:\dis`, `D:\dis`. Папка считается сборкой zapret, если в ней есть `bin\winws.exe`, `winws.exe` или `service.bat`. Конфиг выбирается так: сработавший в прошлый раз, затем `general.bat`, затем любой `general*.bat`, затем остальные; пробуется не больше 5. Служебные вроде `service.bat` пропускаются.
 
 ### Что именно меняется
 
@@ -393,14 +401,19 @@ Enter = the default, q = cancel
 ### Ограничения
 
 - Адреса Cloudflare могут меняться — просто запустите файл ещё раз, он всё перепроверит.
-- **Не работает при включённом VPN/TUN.** Адреса закреплены для прямого подключения через провайдера; внутри туннеля они недоступны, да и zapret с VPN не работает.
-- Если сеть режет весь диапазон, `hosts` не спасёт: нужен полноценный VPN для Discord.
+- **Не работает при включённом VPN/TUN.** Адреса закреплены для прямого подключения через провайдера; внутри туннеля они недоступны, да и zapret с VPN не работает. Скрипт проверяет это сам: если default route идёт в туннель — выходит с кодом `3` и ничего не пишет. Туннель, который просто поднят, но трафик через него не идёт (split tunneling), не мешает — будет только пометка в консоли. `-IgnoreVpn` запускает вопреки проверке.
+- Если сеть режет весь диапазон, `hosts` не спасёт: нужен туннель или прокси для Discord.
+- Если блок по имени, а не по адресу, пины тоже не лекарство: нужен другой конфиг zapret или туннель. Скрипт различает эти случаи и говорит, какой именно у вас.
 - Это не VPN и не сокрытие трафика, а локальная таблица адресов.
 - Закрепляются IPv4-адреса.
 
 ### Если не сработало
 
-- **«No address answered»** — zapret не поднялся или сеть режет весь диапазон. Проверьте окно zapret, попробуйте другой конфиг через `-Config` либо VPN.
+- **«VPN or TUN tunnel is active» (код выхода `3`)** — default route идёт через туннель, поэтому закреплённые адреса недоступны. Выключите VPN и запустите снова, исключите `*.discordapp.net` из туннеля, либо добавьте `-IgnoreVpn`, если точно знаете, что Discord в туннель не попадает.
+- **«No address answered»** — дальше будет одна из двух строк:
+  - *«TCP connects, but TLS … fails on every address»* — блок по имени: DPI рвёт рукопожатие для `media.discordapp.net` на любом адресе, перепиннинг не поможет. Пробуйте другие конфиги (`-ShowConfigs`, затем `-Config "general (ALT...).bat"`); если ни один не берёт — выход только туннель или прокси для Discord.
+  - *«TCP 443 does not connect to any of them»* — режут сами адреса (или душат так, что соединение не встаёт за 6 с). Конфиги тоже не помогут: нужен туннель только для Discord (VPN со split tunneling на `162.159.128.0/18`) или прокси.
+  В обоих случаях `hosts` намеренно не меняется: мёртвые адреса не пишутся.
 - **«All Discord media hosts answer — the pins are fine, hosts left as is»** — скрипт проверил все три хоста через работающий обход, каждый ответил, поэтому `hosts` он намеренно не трогал. Это нормальное состояние при втором и последующих запусках. Если в Discord картинки всё равно битые — закройте его полностью (включая иконку в трее) и откройте снова: работающий клиент держит старые адреса до перезапуска. Перепроверить и перепинить принудительно — запуск с `-Force`. При включённом VPN эта проверка тоже может пройти, хотя Discord будет ломаться.
 - **«Could not write hosts»** — чаще всего Defender *Controlled folder access*: разрешите изменение на минуту.
 - **Блок записался, но картинок нет** — полностью закройте Discord (включая иконку в трее) и откройте снова.
@@ -414,4 +427,4 @@ Enter = the default, q = cancel
 - Каждый релиз — это тег `v<версия>` и релиз на GitHub, в архиве которого ровно три рабочих файла.
 - Порядок выпуска: поднять `$AppVersion` → добавить запись в CHANGELOG → коммит → тег `v<версия>` → опубликовать релиз с архивом.
 
-Текущий релиз — **v1.3.2**.
+Текущий релиз — **v1.4.0**.
