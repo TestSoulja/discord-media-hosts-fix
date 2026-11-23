@@ -43,7 +43,9 @@ D:\zapret\
 3. Wait 10–30 seconds while it probes addresses.
 4. Discord restarts by itself. Images load.
 
-You only do this once. Later just double-click the same file again if media breaks.
+You only do this once. After that, **start zapret with this same file** instead of `general.bat`: it starts the same config and refreshes the pinned addresses. Discord itself starts as usual, from its normal shortcut — no special launch needed. Keep the minimized zapret window open: closing it stops the bypass.
+
+> **A VPN must be off for Discord.** The fix does not work while a VPN or a TUN-mode tunnel (for example Happ) is active: traffic leaves through the tunnel and the pinned direct addresses are not reachable, so images break again. Turn the VPN off, or exclude `*.discordapp.net` from the tunnel.
 
 **Don't want to copy anything into the bundle?** Keep the files in any folder and run:
 
@@ -184,7 +186,8 @@ Safety details:
 ## Limitations
 
 - The addresses are Cloudflare anycast IPs and can rotate. If media breaks again months later, run the script again — it re-probes.
-- If the block covers every address in the range, no `hosts` entry can help; use a VPN or a proxy for Discord.
+- **Does not work with a VPN or TUN tunnel enabled.** The pinned addresses are reached directly through your ISP; inside a tunnel they are not available. zapret itself also does not work through a VPN.
+- If the block covers every address in the range, no `hosts` entry can help: this method is done, use a full VPN for Discord instead.
 - The fix is per hostname and per machine. It is not a VPN and does not hide traffic.
 - IPv6-only networks that resolve the CDN over IPv6 are out of scope: the block pins IPv4 addresses.
 
@@ -245,7 +248,9 @@ D:\zapret\
 3. Подождите 10–30 секунд, пока проверяются адреса.
 4. Discord перезапустится сам. Картинки загрузятся.
 
-Делается один раз. Если через месяцы медиа снова отвалится — просто запустите тот же файл ещё раз.
+Делается один раз. Дальше **запускайте zapret этим же файлом**, а не `general.bat`: он поднимает тот же конфиг и обновляет закреплённые адреса. Сам Discord открывается как обычно, ярлыком — специально через батник его запускать не нужно. Свёрнутое окно zapret не закрывайте: закрыли — обход выключился.
+
+> **VPN должен быть выключен.** С включённым VPN или туннелем (например, Happ в TUN-режиме) фикс не работает: трафик уходит через туннель, закреплённые адреса прямого подключения недоступны — картинки снова отвалятся. Выключите VPN или исключите `*.discordapp.net` из туннеля.
 
 **Не хотите ничего копировать в сборку?** Держите файлы где угодно и запускайте:
 
@@ -330,7 +335,8 @@ Enter = the default, q = cancel
 ### Ограничения
 
 - Адреса Cloudflare могут меняться — просто запустите файл ещё раз, он всё перепроверит.
-- Если сеть режет весь диапазон, `hosts` не спасёт: нужен VPN или прокси.
+- **Не работает при включённом VPN/TUN.** Адреса закреплены для прямого подключения через провайдера; внутри туннеля они недоступны, да и zapret с VPN не работает.
+- Если сеть режет весь диапазон, `hosts` не спасёт: нужен полноценный VPN для Discord.
 - Это не VPN и не сокрытие трафика, а локальная таблица адресов.
 - Закрепляются IPv4-адреса.
 

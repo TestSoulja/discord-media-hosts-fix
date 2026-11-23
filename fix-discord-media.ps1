@@ -519,7 +519,10 @@ if ($zapretConfig) {
         while ((Get-Date) -lt $deadline -and -not (Test-Winws)) {
             Start-Sleep -Milliseconds 500
         }
-        if (Test-Winws) { Write-Step 'winws.exe is running.' 'Green' }
+        if (Test-Winws) {
+            Write-Step 'winws.exe is running.' 'Green'
+            Write-Step 'Do not close the minimized zapret window - it keeps the bypass up.' 'Red'
+        }
         else { Write-Step 'winws.exe did not appear within 45 s - check its window, pressing on anyway.' 'Yellow' }
     }
 }
@@ -608,36 +611,48 @@ else {
 }
 
 # ---------- restart Discord ----------
-if ($NoRestart -or $DryRun) { return }
+if (-not ($NoRestart -or $DryRun)) {
+    $clientNames = @('Discord', 'DiscordPTB', 'DiscordCanary', 'DiscordDevelopment')
+    $running = @()
+    foreach ($name in $clientNames) {
+        if (Get-Process -Name $name -ErrorAction SilentlyContinue) { $running += $name }
+    }
 
-$clientNames = @('Discord', 'DiscordPTB', 'DiscordCanary', 'DiscordDevelopment')
-$running = @()
-foreach ($name in $clientNames) {
-    if (Get-Process -Name $name -ErrorAction SilentlyContinue) { $running += $name }
+    if ($running.Count -eq 0) {
+        Write-Step ''
+        Write-Step 'Discord is not running - just open it when you need it.' 'Gray'
+    }
+    else {
+        Write-Step ''
+        Write-Step ("Restarting so the new addresses are picked up: {0}" -f ($running -join ', ')) 'Gray'
+        foreach ($name in $running) {
+            Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 1200
+
+        $started = Start-Discord -Names $running
+        if ($started -gt 0) {
+            Write-Step 'Discord started.' 'Green'
+        }
+        else {
+            Write-Step 'Could not find the Discord updater - open the client manually.' 'Yellow'
+        }
+    }
 }
 
-if ($running.Count -eq 0) {
-    Write-Step ''
-    Write-Step 'Discord is not running - just open it when you need it.' 'Gray'
-    return
-}
+if ($DryRun) { return }
 
 Write-Step ''
-Write-Step ("Restarting so the new addresses are picked up: {0}" -f ($running -join ', ')) 'Gray'
-foreach ($name in $running) {
-    Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-}
-Start-Sleep -Milliseconds 1200
-
-$started = Start-Discord -Names $running
-if ($started -gt 0) {
-    Write-Step 'Discord started.' 'Green'
-}
-else {
-    Write-Step 'Could not find the Discord updater - open the client manually.' 'Yellow'
-}
-
+Write-Step 'IMPORTANT: do not close the minimized zapret window.' 'Red'
+Write-Step 'It keeps the bypass running - closing it breaks Discord media again.' 'Red'
 Write-Step ''
-Write-Step 'Done. zapret keeps running in its minimized window - do not close it.' 'Cyan'
-Write-Step 'If media breaks again later, just run this file again.' 'Cyan'
-Write-Step 'Undo any time: fix-discord-media.bat -Remove' 'DarkGray'
+
+if ($zapretConfig) {
+    $configName = Split-Path -Leaf $zapretConfig
+    Write-Step ("From now on start zapret with this file, not only with {0}:" -f $configName) 'Cyan'
+    Write-Step '  it starts the same config and refreshes the pinned addresses.' 'Cyan'
+}
+Write-Step 'Discord itself starts as usual, from its normal shortcut.' 'Cyan'
+Write-Step 'A VPN must be off for Discord: this fix needs a direct connection with zapret.' 'Yellow'
+Write-Step 'If media breaks again later, run this file again.' 'Gray'
+Write-Step 'Undo any time: remove-pins.bat' 'DarkGray'
