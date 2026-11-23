@@ -8,6 +8,53 @@ The script starts your zapret config if it is not running, probes Cloudflare add
 
 ---
 
+## Quick start
+
+**Easiest way:** open the [Releases page](https://github.com/TestSoulja/discord-media-fix/releases/latest), download `discord-media-fix.zip`, unpack it — and go to step 2.
+
+**1. What to download** (three files):
+
+| File | What it is |
+|---|---|
+| `fix-discord-media.bat` | the file you double-click |
+| `fix-discord-media.ps1` | the actual logic — must sit next to the `.bat` |
+| `remove-pins.bat` | undo, if you ever need it |
+
+All three are in this repository. Do not download only the `.bat`: it needs the `.ps1` in the same folder.
+
+**2. Where to put them:** into your zapret folder — the one that contains `service.bat` and `bin\winws.exe`. Put all three files there, next to `general.bat`:
+
+```
+D:\zapret\
+  bin\winws.exe
+  lists\
+  service.bat
+  general.bat
+  general (ALT11).bat
+  fix-discord-media.bat      <- copied here
+  fix-discord-media.ps1      <- copied here
+  remove-pins.bat            <- copied here
+```
+
+**3. Run:** double-click `fix-discord-media.bat`.
+
+1. Windows asks for administrator rights — click **Yes**.
+2. If zapret is not running, pick a config from the list (number + Enter).
+3. Wait 10–30 seconds while it probes addresses.
+4. Discord restarts by itself. Images load.
+
+You only do this once. Later just double-click the same file again if media breaks.
+
+**Don't want to copy anything into the bundle?** Keep the files in any folder and run:
+
+```bat
+fix-discord-media.bat -ZapretDir "C:\path\to\zapret"
+```
+
+The folder is auto-detected in the usual places, so on most machines this is not needed.
+
+---
+
 ## Why zapret alone does not fix this
 
 On some networks the Discord media CDN (`media.discordapp.net`, `images-ext-1/2.discordapp.net`) is blocked **by destination IP address**, not by domain name. The diagnostic signature is:
@@ -162,6 +209,51 @@ MIT. Do whatever you want, no warranty. See [LICENSE](LICENSE).
 Однокликовый фикс для случая, когда **zapret уже запущен, а картинки в Discord всё равно не грузятся** — «Не удалось загрузить изображение», пустые аватарки, нет стикеров, эмодзи и вложений, при этом текст и голос работают.
 
 Скрипт поднимает ваш конфиг zapret (если `winws.exe` не запущен), проверяет адреса Cloudflare, которые обслуживают медиа-CDN Discord, оставляет только те, что реально отвечают, и прописывает их в `hosts` Windows — в отдельном помеченном блоке. Потом перезапускает Discord.
+
+### Быстрый старт
+
+**Проще всего:** откройте [страницу релизов](https://github.com/TestSoulja/discord-media-fix/releases/latest), скачайте `discord-media-fix.zip`, распакуйте — и переходите к пункту 2.
+
+**1. Что скачать** — три файла:
+
+| Файл | Это что |
+|---|---|
+| `fix-discord-media.bat` | по нему вы кликаете |
+| `fix-discord-media.ps1` | сама логика, должен лежать рядом с `.bat` |
+| `remove-pins.bat` | откат, если понадобится |
+
+Скачивать один `.bat` нельзя: без `.ps1` в той же папке он не заработает.
+
+**2. Куда положить:** в папку своей сборки zapret — ту, где лежат `service.bat` и `bin\winws.exe`. Все три файла рядом с `general.bat`:
+
+```
+D:\zapret\
+  bin\winws.exe
+  lists\
+  service.bat
+  general.bat
+  general (ALT11).bat
+  fix-discord-media.bat      <- сюда
+  fix-discord-media.ps1      <- сюда
+  remove-pins.bat            <- сюда
+```
+
+**3. Запуск:** двойной клик по `fix-discord-media.bat`.
+
+1. Windows спросит права администратора — **Да**.
+2. Если zapret не запущен, выберите конфиг из списка (номер + Enter).
+3. Подождите 10–30 секунд, пока проверяются адреса.
+4. Discord перезапустится сам. Картинки загрузятся.
+
+Делается один раз. Если через месяцы медиа снова отвалится — просто запустите тот же файл ещё раз.
+
+**Не хотите ничего копировать в сборку?** Держите файлы где угодно и запускайте:
+
+```bat
+fix-discord-media.bat -ZapretDir "C:\путь\к\zapret"
+```
+
+В обычных местах папка находится сама, так что на большинстве машин этот аргумент не нужен.
 
 ### Почему одного zapret не хватает
 

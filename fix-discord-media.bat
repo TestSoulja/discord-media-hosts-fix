@@ -8,6 +8,16 @@ setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
 
+if not exist "%~dp0fix-discord-media.ps1" (
+    echo.
+    echo fix-discord-media.ps1 is missing next to this file.
+    echo Keep both files in the same folder and run this one again.
+    echo Download both from https://github.com/TestSoulja/discord-media-fix
+    echo.
+    pause
+    exit /b 1
+)
+
 fltmc >nul 2>&1
 if errorlevel 1 (
     echo Requesting administrator rights...
