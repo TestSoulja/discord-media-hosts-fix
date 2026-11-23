@@ -14,6 +14,23 @@ Every release is a git tag `v<version>` (for example `v1.3.0`), and the release
 archive `discord-media-fix.zip` always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
 
+## [1.7.0] - 2026-11-23
+
+### Changed
+
+- **The zapret folder is no longer guessed.** The script uses the folder it
+  lives in, and `-ZapretDir` for every other case. The extra candidates - the
+  parent folder and `%USERPROFILE%\zapret`, `C:\zapret`, `D:\zapret`, `C:\dis`,
+  `D:\dis` - are gone. On a machine with several zapret copies the old search
+  could pick the wrong one and then never start the bypass: it reported
+  `No config (.bat) found in the zapret folder` and continued without zapret,
+  while the real bundle sat in another folder that was not in the list.
+- The console now names the folder it looked in and says the two ways to fix
+  it: copy the three files into the zapret bundle, or pass `-ZapretDir`.
+- README (EN/RU) drops the "auto-detected in the usual places" wording and the
+  three-step search order; it states the single rule and when `-ZapretDir` is
+  required.
+
 ## [1.6.1] - 2026-11-23
 
 ### Changed

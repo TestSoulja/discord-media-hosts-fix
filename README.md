@@ -84,13 +84,13 @@ So: `general.bat` is faster, this file is more reliable. If media broke on you m
 
 > **A VPN must be off for Discord.** The fix does not work while a VPN or a TUN-mode tunnel (for example Happ) is active: traffic leaves through the tunnel and the pinned direct addresses are not reachable, so images break again. Turn the VPN off, or exclude `*.discordapp.net` from the tunnel.
 
-**Don't want to copy anything into the bundle?** Keep the files in any folder and run:
+**Don't want to copy anything into the bundle?** Keep the files in any folder and point the script at zapret:
 
 ```bat
 fix-discord-media.bat -ZapretDir "C:\path\to\zapret"
 ```
 
-The folder is auto-detected in the usual places, so on most machines this is not needed.
+The script looks for zapret only in its own folder, so this argument is required when the files and the bundle are separate.
 
 ---
 
@@ -112,7 +112,7 @@ The only thing that works is a **different destination address** that serves the
 ## What the script does
 
 1. Refuses to run while a VPN or TUN tunnel carries the default route (exit code `3`): pinned addresses are not reachable through a tunnel, so nothing would be fixed.
-2. Finds your zapret folder and your configs (`general.bat`, `general (ALT11).bat`, …).
+2. Reads the configs (`general.bat`, `general (ALT11).bat`, …) from the folder it lives in.
 3. Starts the remembered config (or `general.bat`), waits for `winws.exe`, then waits a few seconds so WinDivert really attaches before the first probe.
 4. Checks four seed addresses of `media.discordapp.net` through the bypass. If they answer, that config stays.
 5. If they do not, asks a control question — does `discord.com` load through this bypass at all — and names which of the two it is: only the media hosts are cut, or the bypass is not beating the DPI. Then stops the bypass and starts the next config and repeats, through every config found in the folder. When even TCP 443 does not connect, no desync can help and the switching stops.
@@ -135,7 +135,7 @@ If no address answers, nothing is written and the script exits with code `2` —
 | Action | How |
 |---|---|
 | Apply the fix | double-click **`fix-discord-media.bat`** |
-| List detected zapret configs | `fix-discord-media.bat -ShowConfigs` |
+| List the configs found next to the script | `fix-discord-media.bat -ShowConfigs` |
 | Preview without changing anything | `fix-discord-media.bat -DryRun` |
 | Undo | double-click **`remove-pins.bat`** |
 
@@ -149,7 +149,7 @@ Options (pass them through the `.bat` or call the `.ps1` from an elevated PowerS
 | `-NoRestart` | do not touch the Discord client |
 | `-NoZapret` | do not look for or start zapret, only pin hosts |
 | `-IgnoreVpn` | continue even when a VPN carries the default route |
-| `-ZapretDir <path>` | zapret folder (auto-detected when omitted) |
+| `-ZapretDir <path>` | zapret folder (default: the folder this script is in) |
 | `-Config <name>` | use only this config, no automatic switching, for example `"general (ALT11).bat"` |
 | `-MaxConfigs <n>` | stop the automatic sweep after `n` configs (default: all of them) |
 | `-RestartZapret` | restart the bypass even if it already answers |
@@ -164,7 +164,7 @@ Options (pass them through the `.bat` or call the `.ps1` from an elevated PowerS
 Typical cases:
 
 ```bat
-:: the bundle sits somewhere unusual
+:: the files are not inside the zapret folder
 fix-discord-media.bat -ZapretDir "D:\zapret"
 
 :: you normally run a specific alternative config
@@ -198,12 +198,12 @@ This one works - keeping it.
 
 ## Where it looks for zapret
 
-In this order, first match wins:
+Only in one place:
 
 1. `-ZapretDir`, if you passed it;
-2. the folder where this script lives;
-3. its parent folder;
-4. `%USERPROFILE%\zapret`, `C:\zapret`, `D:\zapret`, `C:\dis`, `D:\dis`.
+2. otherwise the folder where this script lives.
+
+Nothing else is scanned - no parent folder, no `C:\zapret` / `D:\zapret` guesses. On a machine with several zapret copies that keeps the answer predictable: the bundle used is always the one holding the three files (or the one you named).
 
 A folder counts as a zapret folder when it contains `bin\winws.exe`, `winws.exe` or `service.bat`. Configs are picked as: the one that worked last time, then `general.bat`, then any `general*.bat`, then the rest; every config found is tried (`-MaxConfigs N` limits the sweep). `service.bat`, installers and helper scripts are skipped.
 
@@ -353,13 +353,13 @@ This file is not a Discord launcher: open Discord from its usual shortcut.
 
 > **VPN должен быть выключен.** С включённым VPN или туннелем (например, Happ в TUN-режиме) фикс не работает: трафик уходит через туннель, закреплённые адреса прямого подключения недоступны — картинки снова отвалятся. Выключите VPN или исключите `*.discordapp.net` из туннеля.
 
-**Не хотите ничего копировать в сборку?** Держите файлы где угодно и запускайте:
+**Не хотите ничего копировать в сборку?** Держите файлы где угодно и укажите папку zapret:
 
 ```bat
 fix-discord-media.bat -ZapretDir "C:\путь\к\zapret"
 ```
 
-В обычных местах папка находится сама, так что на большинстве машин этот аргумент не нужен.
+Скрипт ищет zapret только в своей папке, поэтому без этого аргумента он сборку не найдёт.
 
 ### Почему одного zapret не хватает
 
@@ -420,7 +420,14 @@ This one works - keeping it.
 
 ### Где скрипт ищет zapret
 
-По порядку, что найдётся первым: `-ZapretDir`; папка самого скрипта; её родитель; `%USERPROFILE%\zapret`, `C:\zapret`, `D:\zapret`, `C:\dis`, `D:\dis`. Папка считается сборкой zapret, если в ней есть `bin\winws.exe`, `winws.exe` или `service.bat`. Конфиг выбирается так: сработавший в прошлый раз, затем `general.bat`, затем любой `general*.bat`, затем остальные; пробуется каждый найденный (`-MaxConfigs N` ограничивает перебор). Служебные вроде `service.bat` пропускаются.
+Только в одном месте:
+
+1. `-ZapretDir`, если он передан;
+2. иначе папка самого скрипта.
+
+Больше ничего не сканируется — ни родительская папка, ни `C:\zapret` / `D:\zapret`. Когда на машине несколько сборок, так всегда понятно, какая из них используется: та, где лежат три файла (или та, что указана вручную).
+
+Папка считается сборкой zapret, если в ней есть `bin\winws.exe`, `winws.exe` или `service.bat`. Конфиг выбирается так: сработавший в прошлый раз, затем `general.bat`, затем любой `general*.bat`, затем остальные; пробуется каждый найденный (`-MaxConfigs N` ограничивает перебор). Служебные вроде `service.bat` пропускаются.
 
 ### Что именно меняется
 

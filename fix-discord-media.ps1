@@ -23,8 +23,9 @@
   script says WHY (blocked by name or the addresses themselves are dropped)
   and leaves hosts unchanged instead of pinning dead addresses.
 
-  It works with any zapret bundle layout (winws.exe in bin\ or in the root),
-  finds the folder automatically, and never edits the zapret config itself.
+  It works with any zapret bundle layout (winws.exe in bin\ or in the root).
+  It only uses the folder it lives in - copy the three files into the zapret
+  bundle, or pass -ZapretDir - and never edits the zapret config itself.
 
   Usage (double-click the .bat, it asks for administrator rights itself):
       fix-discord-media.bat                 apply the fix
@@ -46,7 +47,7 @@
       -IgnoreVpn       continue even when a VPN carries the default route
                        (by default the script stops and explains: pins cannot
                        be reached through a tunnel)
-      -ZapretDir PATH  zapret folder (auto-detected when omitted)
+      -ZapretDir PATH  zapret folder (default: the folder of this script)
       -Config NAME     use only this config, no automatic switching,
                        e.g. "general (ALT11).bat"
       -MaxConfigs N    stop the automatic sweep after N configs
@@ -94,7 +95,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.6.1'
+$AppVersion = '1.7.0'
 
 $ErrorActionPreference = 'Stop'
 
@@ -251,27 +252,14 @@ function Test-ZapretFolder {
            (Test-Path -LiteralPath (Join-Path $Dir 'service.bat'))
 }
 
+# The zapret folder is never guessed: it is the folder this script lives in,
+# or exactly what -ZapretDir points at. On a machine with several zapret copies
+# a wider search could pick the wrong one, which is why nothing else is scanned.
 function Find-ZapretDir {
     param([string]$Path)
 
-    if ($Path) {
-        if (Test-ZapretFolder -Dir $Path) { return (Resolve-Path -LiteralPath $Path).Path }
-        return ''
-    }
-
-    $candidates = @(
-        $scriptDir,
-        (Split-Path -Parent $scriptDir),
-        (Join-Path $env:USERPROFILE 'zapret'),
-        'C:\zapret',
-        'D:\zapret',
-        'C:\dis',
-        'D:\dis'
-    )
-
-    foreach ($dir in $candidates) {
-        if (Test-ZapretFolder -Dir $dir) { return (Resolve-Path -LiteralPath $dir).Path }
-    }
+    if (-not $Path) { $Path = $scriptDir }
+    if ($Path -and (Test-ZapretFolder -Dir $Path)) { return (Resolve-Path -LiteralPath $Path).Path }
     return ''
 }
 
@@ -699,8 +687,15 @@ if (-not $NoZapret) {
     Write-Step 'One-time fix: this file starts zapret, not Discord. Later, open Discord as usual.' 'DarkGray'
     $zapretHome = Find-ZapretDir -Path $ZapretDir
     if (-not $zapretHome) {
-        Write-Step 'No zapret folder found.' 'Yellow'
-        Write-Step 'Point the script at it: -ZapretDir "D:\zapret" (the folder with bin\winws.exe).' 'Yellow'
+        if ($ZapretDir) {
+            Write-Step ("No zapret folder at: {0}" -f $ZapretDir) 'Yellow'
+            Write-Step 'It must contain bin\winws.exe, winws.exe or service.bat.' 'Yellow'
+        }
+        else {
+            Write-Step ("No zapret folder next to this file: {0}" -f $scriptDir) 'Yellow'
+            Write-Step 'Copy the three files into your zapret folder, or point the script at it:' 'Yellow'
+            Write-Step '-ZapretDir "D:\zapret" (the folder with bin\winws.exe).' 'Yellow'
+        }
         Write-Step 'Continuing without zapret: only the address list will be checked.' 'Yellow'
     }
     else {
