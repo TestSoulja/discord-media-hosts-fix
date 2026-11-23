@@ -60,8 +60,11 @@ Options (pass them through the `.bat` or call the `.ps1` from an elevated PowerS
 | `-NoRestart` | do not touch the Discord client |
 | `-NoZapret` | do not look for or start zapret, only pin hosts |
 | `-ZapretDir <path>` | zapret folder (auto-detected when omitted) |
-| `-Config <name>` | config to start, for example `"general (ALT11).bat"` |
+| `-Config <name>` | start this config and skip the menu, for example `"general (ALT11).bat"` |
+| `-RestartZapret` | stop the running `winws.exe` and start the chosen config |
 | `-ShowConfigs` | list configs found in the zapret folder and exit |
+| `-Prompt` | always show the config menu, even when input looks redirected |
+| `-NoPrompt` | never show the menu, just use the default / remembered config |
 | `-HostsFile <path>` | alternate `hosts` file (for testing) |
 | `-Hosts <name...>` | hostnames to pin (default: the three Discord media hosts) |
 | `-ExtraIPs <ip...>` | additional candidate addresses to probe first |
@@ -79,6 +82,27 @@ fix-discord-media.bat -Config "general (ALT11).bat"
 fix-discord-media.bat -NoZapret
 ```
 
+## Choosing the config
+
+When `winws.exe` is not running yet, the script lists every config it found and asks which one to start:
+
+```
+Configs found:
+  [1] general (ALT.1).bat
+  [2] general (ALT11).bat
+  [3] general.bat   <- default
+
+Which zapret config should be started?
+Enter = the default, q = cancel
+  Number: _
+```
+
+- Enter uses the default; `q` cancels and changes nothing.
+- The choice is remembered in `%LOCALAPPDATA%\discord-media-fix\last-config.txt`, so the next run offers it as the default.
+- `-Config "name.bat"` skips the menu entirely.
+- If zapret is already running, the script reuses it and does not ask. Add `-RestartZapret` to stop it and start the config you picked.
+- `-ShowConfigs` prints the same numbered list and exits without doing anything.
+
 ## Where it looks for zapret
 
 In this order, first match wins:
@@ -88,7 +112,7 @@ In this order, first match wins:
 3. its parent folder;
 4. `%USERPROFILE%\zapret`, `C:\zapret`, `D:\zapret`, `C:\dis`, `D:\dis`.
 
-A folder counts as a zapret folder when it contains `bin\winws.exe`, `winws.exe` or `service.bat`. Configs are picked as: `general.bat` first, then any `general*.bat`, then the first other `.bat`. `service.bat`, installers and helper scripts are skipped.
+A folder counts as a zapret folder when it contains `bin\winws.exe`, `winws.exe` or `service.bat`. Configs are picked as: the one you chose last time, then `general.bat`, then any `general*.bat`, then the first other `.bat`. `service.bat`, installers and helper scripts are skipped.
 
 ## What exactly is changed on the machine
 
@@ -171,6 +195,28 @@ fix-discord-media.bat -Config "general (ALT11).bat"       :: запускать 
 fix-discord-media.bat -NoZapret                           :: только пиннинг, zapret не трогать
 fix-discord-media.bat -Force -NoRestart                   :: прописать и не перезапускать Discord
 ```
+
+### Выбор конфига
+
+Когда `winws.exe` ещё не запущен, скрипт показывает все найденные конфиги и спрашивает, какой запускать:
+
+```
+Configs found:
+  [1] general (ALT.1).bat
+  [2] general (ALT11).bat
+  [3] general.bat   <- default
+
+Which zapret config should be started?
+Enter = the default, q = cancel
+  Number: _
+```
+
+- Enter — взять конфиг по умолчанию, `q` — отменить, ничего не меняя.
+- Выбор запоминается в `%LOCALAPPDATA%\discord-media-fix\last-config.txt`, и в следующий раз он предлагается как конфиг по умолчанию.
+- `-Config "имя.bat"` — пропустить меню.
+- Если zapret уже запущен, скрипт его не трогает и не спрашивает. Добавьте `-RestartZapret`, чтобы остановить текущий и запустить выбранный.
+- `-ShowConfigs` — показать нумерованный список и выйти.
+- `-NoPrompt` — никогда не спрашивать (для скриптов и автоматизации), `-Prompt` — спрашивать всегда.
 
 ### Где скрипт ищет zapret
 

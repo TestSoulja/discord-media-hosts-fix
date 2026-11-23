@@ -24,6 +24,11 @@
       fix-discord-media.bat -ShowConfigs    list your zapret configs
       fix-discord-media.bat -DryRun         show what would change
 
+  When zapret is not running yet, the script shows a numbered list of the
+  configs it found and asks which one to start (Enter = the default, which is
+  the last one you picked). The choice is remembered in
+  %LOCALAPPDATA%\discord-media-fix\last-config.txt.
+
   Options:
       -Remove          delete the pin block and exit
       -NoRestart       do not restart the Discord client
@@ -32,7 +37,11 @@
       -NoZapret        do not touch zapret, only pin hosts
       -ZapretDir PATH  zapret folder (auto-detected when omitted)
       -Config NAME     config to start, e.g. "general (ALT11).bat"
-                       (relative to -ZapretDir, or a full path)
+                       (relative to -ZapretDir, or a full path); skips the menu
+      -RestartZapret   stop the running winws.exe and start the chosen config
+                       (by default an already running zapret is left alone)
+      -Prompt          always ask, even when input looks redirected
+      -NoPrompt        never ask, just use the default / remembered config
       -ShowConfigs     list the configs found in the zapret folder and exit
       -HostsFile PATH  alternate hosts file (for testing)
       -Hosts NAME...   hostnames to pin (default: the three Discord media hosts)
@@ -46,6 +55,9 @@ param(
     [switch]$Force,
     [switch]$NoZapret,
     [switch]$ShowConfigs,
+    [switch]$RestartZapret,
+    [switch]$NoPrompt,
+    [switch]$Prompt,
     [string]$ZapretDir = '',
     [string]$Config = '',
     [string]$HostsFile = (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'),
@@ -167,6 +179,73 @@ function Resolve-ZapretConfig {
     if ($general) { return $general.FullName }
 
     return $configs[0].FullName
+}
+
+function Get-SettingsFile {
+    $base = $env:LOCALAPPDATA
+    if (-not $base) { $base = $scriptDir }
+    return (Join-Path (Join-Path $base 'discord-media-fix') 'last-config.txt')
+}
+
+function Get-LastChoice {
+    try {
+        $file = Get-SettingsFile
+        if (Test-Path -LiteralPath $file) { return ([IO.File]::ReadAllText($file)).Trim() }
+    }
+    catch { }
+    return ''
+}
+
+function Save-Choice {
+    param([string]$Name)
+
+    if (-not $Name) { return }
+    try {
+        $file = Get-SettingsFile
+        $dir = Split-Path -Parent $file
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        [IO.File]::WriteAllText($file, $Name, [Text.Encoding]::Default)
+    }
+    catch { }
+}
+
+function Show-ConfigList {
+    param([object[]]$Configs, [string]$Default)
+
+    for ($i = 0; $i -lt $Configs.Count; $i++) {
+        $mark = ''
+        if ($Default -and $Configs[$i].FullName -ieq $Default) { $mark = '   <- default' }
+        Write-Step ("  [{0}] {1}{2}" -f ($i + 1), $Configs[$i].Name, $mark) 'Gray'
+    }
+}
+
+# Interactive picker. Returns a full path, '' when there is nothing to pick,
+# or $null when the user cancels.
+function Select-ZapretConfig {
+    param([object[]]$Configs, [string]$Default)
+
+    if (-not $Configs -or $Configs.Count -eq 0) { return '' }
+    if ($Configs.Count -eq 1) { return $Configs[0].FullName }
+
+    Write-Step ''
+    Write-Step 'Configs found:' 'Gray'
+    Show-ConfigList -Configs $Configs -Default $Default
+    Write-Step ''
+    Write-Step 'Which zapret config should be started?' 'Gray'
+    Write-Step 'Enter = the default, q = cancel' 'DarkGray'
+
+    while ($true) {
+        $answer = Read-Host '  Number'
+        if ($null -eq $answer) { return $null }
+        $answer = $answer.Trim()
+        if ($answer -match '^(q|quit|exit)$') { return $null }
+        if ($answer -eq '') { return $Default }
+        $n = 0
+        if ([int]::TryParse($answer, [ref]$n) -and $n -ge 1 -and $n -le $Configs.Count) {
+            return $Configs[$n - 1].FullName
+        }
+        Write-Step '  Type a number from the list.' 'Yellow'
+    }
 }
 
 function Get-HostsText {
@@ -335,26 +414,68 @@ if (-not $NoZapret) {
     }
     else {
         Write-Step "zapret folder: $zapretHome" 'DarkGray'
-        $zapretConfig = Resolve-ZapretConfig -Dir $zapretHome -Name $Config
+
+        $configs = @(Get-ZapretConfigs -Dir $zapretHome)
+        $defaultConfig = Resolve-ZapretConfig -Dir $zapretHome -Name ''
+
+        # The last config the user picked becomes the default on the next run.
+        $lastChoice = Get-LastChoice
+        if ($lastChoice) {
+            $lastPath = Join-Path $zapretHome $lastChoice
+            if (Test-Path -LiteralPath $lastPath) { $defaultConfig = (Resolve-Path -LiteralPath $lastPath).Path }
+        }
 
         if ($ShowConfigs) {
             Write-Step ''
             Write-Step 'Configs found:' 'Gray'
-            $allConfigs = Get-ZapretConfigs -Dir $zapretHome
-            if ($allConfigs.Count -eq 0) { Write-Step '  (none)' 'Yellow' }
-            foreach ($c in $allConfigs) {
-                $mark = ''
-                if ($c.FullName -eq $zapretConfig) { $mark = '  <- default' }
-                Write-Step ("  {0}{1}" -f $c.Name, $mark) 'Gray'
-            }
+            if ($configs.Count -eq 0) { Write-Step '  (none)' 'Yellow' }
+            Show-ConfigList -Configs $configs -Default $defaultConfig
             Write-Step ''
-            Write-Step 'Start a specific one with: -Config "general (ALT11).bat"' 'Gray'
+            Write-Step 'Run the script without arguments to pick one interactively,' 'Gray'
+            Write-Step 'or pass -Config "name.bat".' 'Gray'
             return
         }
 
-        if (-not $zapretConfig) {
+        if ($configs.Count -eq 0) {
             Write-Step 'No config (.bat) found in the zapret folder.' 'Yellow'
             Write-Step 'Continuing in hosts-only mode.' 'Yellow'
+        }
+        elseif ($Config) {
+            $zapretConfig = Resolve-ZapretConfig -Dir $zapretHome -Name $Config
+            if (-not $zapretConfig) {
+                Write-Step "Config not found: $Config" 'Red'
+                Write-Step 'Run with -ShowConfigs to see what is available.' 'Yellow'
+                exit 1
+            }
+        }
+        else {
+            # Ask only when something is actually going to be started.
+            $willStart = $RestartZapret -or -not (Test-Winws)
+            $interactive = $false
+            if ($willStart) {
+                if ($Prompt) { $interactive = $true }
+                elseif (-not $NoPrompt) {
+                    try { $interactive = -not [Console]::IsInputRedirected } catch { $interactive = $true }
+                }
+            }
+
+            if ($interactive) {
+                $picked = Select-ZapretConfig -Configs $configs -Default $defaultConfig
+                if ($null -eq $picked) {
+                    Write-Step ''
+                    Write-Step 'Cancelled - nothing was changed.' 'Yellow'
+                    exit 0
+                }
+                $zapretConfig = $picked
+            }
+            else {
+                $zapretConfig = $defaultConfig
+            }
+        }
+
+        if ($zapretConfig) {
+            Write-Step ("Config: {0}" -f (Split-Path -Leaf $zapretConfig)) 'Gray'
+            if (-not $DryRun) { Save-Choice (Split-Path -Leaf $zapretConfig) }
         }
     }
 }
@@ -371,14 +492,27 @@ if ($isSystemFile -and -not $Force) {
 
 # ---------- bring the bypass up ----------
 if ($zapretConfig) {
-    if (Test-Winws) {
+    $configName = Split-Path -Leaf $zapretConfig
+    $winws = Test-Winws
+
+    if ($winws -and -not $RestartZapret) {
         Write-Step 'zapret (winws) is already running - using it.' 'DarkGray'
+        Write-Step 'Use -RestartZapret to switch it to the chosen config.' 'DarkGray'
+    }
+    elseif ($winws -and $DryRun) {
+        Write-Step ("Dry run: would stop winws and start {0}" -f $configName) 'DarkGray'
     }
     elseif ($DryRun) {
-        Write-Step ("Dry run: would start {0}" -f $zapretConfig) 'DarkGray'
+        Write-Step ("Dry run: would start {0}" -f $configName) 'DarkGray'
     }
     else {
-        Write-Step ("Starting the bypass: {0}" -f (Split-Path -Leaf $zapretConfig)) 'Gray'
+        if ($winws) {
+            Write-Step 'Stopping the running winws.exe to switch config...' 'Gray'
+            Get-Process -Name 'winws' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 1000
+        }
+
+        Write-Step ("Starting the bypass: {0}" -f $configName) 'Gray'
         Start-Process -FilePath $zapretConfig -WorkingDirectory $zapretHome | Out-Null
 
         $deadline = (Get-Date).AddSeconds(45)
