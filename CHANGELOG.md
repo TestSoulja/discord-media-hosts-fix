@@ -11,8 +11,40 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **PATCH** — fixes and documentation only, no behavior change.
 
 Every release is a git tag `v<version>` (for example `v1.3.0`), and the release
-archive `discord-media-fix.zip` always contains exactly the three working files:
+archive `discord-media-hosts-fix.zip` (`discord-media-fix.zip` before 1.7.1)
+always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
+
+## [1.7.1] - 2026-11-23
+
+### Changed
+
+- **The project is now `discord-media-hosts-fix`** - the GitHub repository, the
+  README title, the console banner and the release archive. The name now states
+  what the fix actually is: reachable addresses for the Discord media hosts,
+  pinned in `hosts`. The problem it repairs stays the same: the CDN is blocked by
+  destination address, so only a different address gets through.
+- The download link printed by the `.bat` files and every repository link in the
+  README point at the new name; the archive is now
+  `discord-media-hosts-fix.zip`. Old `github.com/TestSoulja/discord-media-fix`
+  links keep working through GitHub's redirect - do not create a new repository
+  under the old name, or the redirect stops.
+- The remembered zapret config lives in
+  `%LOCALAPPDATA%\discord-media-hosts-fix\last-config.txt`. The old file is not
+  read, so the first run after the update picks a config again; no other effect.
+
+### Not changed on purpose
+
+- File names (`fix-discord-media.bat`, `fix-discord-media.ps1`,
+  `remove-pins.bat`), every option and the hosts marker
+  `# >>> discord-media-pin (auto) >>>` stay as they were. Existing shortcuts
+  keep working, a block pinned by an older version is still recognised and
+  removed, and nothing has to be reinstalled or re-pinned.
+
+### Fixed
+
+- README (EN/RU) still showed `v1.6.1` after the 1.7.0 release; it now shows the
+  current version.
 
 ## [1.7.0] - 2026-11-23
 

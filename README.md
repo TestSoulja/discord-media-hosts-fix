@@ -1,4 +1,4 @@
-# Discord media fix for Windows (zapret + hosts)
+# Discord media hosts fix for Windows (zapret + hosts)
 
 One-click fix for the situation when you already run **zapret** (DPI bypass), but Discord still **does not load images** — "Failed to load image", empty avatars, no stickers, emoji or attachments, while text and voice work normally.
 
@@ -6,7 +6,7 @@ The script checks that no VPN is carrying the traffic, starts your zapret config
 
 > **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
 
-**Version 1.6.1** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-fix/releases)
+**Version 1.7.1** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -14,7 +14,7 @@ The script checks that no VPN is carrying the traffic, starts your zapret config
 
 ## Quick start
 
-**Easiest way:** open the [Releases page](https://github.com/TestSoulja/discord-media-fix/releases/latest), download `discord-media-fix.zip`, unpack it — and go to step 2. The archive contains only the three files below, so copying them into your bundle overwrites nothing.
+**Easiest way:** open the [Releases page](https://github.com/TestSoulja/discord-media-hosts-fix/releases/latest), download `discord-media-hosts-fix.zip`, unpack it — and go to step 2. The archive contains only the three files below, so copying them into your bundle overwrites nothing.
 
 **1. What to download** (three files):
 
@@ -187,7 +187,7 @@ Starting the bypass: general.bat
 This one works - keeping it.
 ```
 
-- The config that actually worked is remembered in `%LOCALAPPDATA%\discord-media-fix\last-config.txt` and is tried first next time.
+- The config that actually worked is remembered in `%LOCALAPPDATA%\discord-media-hosts-fix\last-config.txt` and is tried first next time.
 - Order: the remembered config, then `general.bat`, then other `general*` configs, then the rest. **Every** config found in the folder is tried, one at a time, so on a big bundle the sweep can take several minutes; that is why the winner is remembered.
 - `-MaxConfigs 5` stops the sweep after five configs if you would rather not wait.
 - Switching stops early when TCP 443 does not connect to the CDN at all: that is not something another desync strategy can fix.
@@ -262,10 +262,10 @@ This is a versioned project, not a loose set of scripts.
 
 - The version follows **Semantic Versioning** (`MAJOR.MINOR.PATCH`) and lives in one place: `$AppVersion` at the top of `fix-discord-media.ps1`. Run `fix-discord-media.bat -Version` to print it.
 - Every change is written down in [CHANGELOG.md](CHANGELOG.md) under `Added` / `Changed` / `Fixed` / `Removed`.
-- Every release is a git tag `v<version>` and a GitHub release whose `discord-media-fix.zip` contains exactly the three working files.
+- Every release is a git tag `v<version>` and a GitHub release whose `discord-media-hosts-fix.zip` contains exactly the three working files.
 - Release checklist: bump `$AppVersion` → add a CHANGELOG entry → commit → tag `v<version>` → publish the release with the archive.
 
-The current release is **v1.6.1**.
+The current release is **v1.7.1**.
 
 ## License
 
@@ -283,7 +283,7 @@ MIT. Do whatever you want, no warranty. See [LICENSE](LICENSE).
 
 ### Быстрый старт
 
-**Проще всего:** откройте [страницу релизов](https://github.com/TestSoulja/discord-media-fix/releases/latest), скачайте `discord-media-fix.zip`, распакуйте — и переходите к пункту 2. В архиве только три нужных файла, так что при копировании в сборку ничего не перезапишется.
+**Проще всего:** откройте [страницу релизов](https://github.com/TestSoulja/discord-media-hosts-fix/releases/latest), скачайте `discord-media-hosts-fix.zip`, распакуйте — и переходите к пункту 2. В архиве только три нужных файла, так что при копировании в сборку ничего не перезапишется.
 
 **1. Что скачать** — три файла:
 
@@ -409,7 +409,7 @@ Starting the bypass: general.bat
 This one works - keeping it.
 ```
 
-- Конфиг, который реально сработал, запоминается в `%LOCALAPPDATA%\discord-media-fix\last-config.txt` и в следующий раз пробуется первым.
+- Конфиг, который реально сработал, запоминается в `%LOCALAPPDATA%\discord-media-hosts-fix\last-config.txt` и в следующий раз пробуется первым.
 - Порядок: запомненный конфиг, затем `general.bat`, затем остальные `general*`, затем все прочие. Пробуется **каждый** найденный конфиг по очереди, поэтому на большой сборке перебор может занять несколько минут — именно поэтому рабочий конфиг запоминается.
 - `-MaxConfigs 5` останавливает перебор после пяти конфигов, если ждать не хочется.
 - Перебор прекращается, если TCP 443 вообще не соединяется с CDN: это не лечится другой стратегией desync.
@@ -472,4 +472,4 @@ This one works - keeping it.
 - Каждый релиз — это тег `v<версия>` и релиз на GitHub, в архиве которого ровно три рабочих файла.
 - Порядок выпуска: поднять `$AppVersion` → добавить запись в CHANGELOG → коммит → тег `v<версия>` → опубликовать релиз с архивом.
 
-Текущий релиз — **v1.6.1**.
+Текущий релиз — **v1.7.1**.

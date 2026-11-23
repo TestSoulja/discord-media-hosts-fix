@@ -36,7 +36,7 @@
   When zapret is not running yet, the script starts the best config it found
   (the last one that worked, else general.bat) and switches to the next config
   only if media still does not answer. Nothing is asked. The config that
-  actually worked is remembered in %LOCALAPPDATA%\discord-media-fix\last-config.txt.
+  actually worked is remembered in %LOCALAPPDATA%\discord-media-hosts-fix\last-config.txt.
 
   Options:
       -Remove          delete the pin block and exit
@@ -65,7 +65,7 @@
   Versioning: Semantic Versioning (MAJOR.MINOR.PATCH). The version is defined
   once below in $AppVersion, the tag is v<version>, and every change is written
   down in CHANGELOG.md. When releasing: bump $AppVersion, add a CHANGELOG entry,
-  commit, tag v<version>, and attach the three files as discord-media-fix.zip.
+  commit, tag v<version>, and attach the three files as discord-media-hosts-fix.zip.
 
   License: MIT, Copyright (c) 2026 TestSoulja. See LICENSE in the repository.
 #>
@@ -95,7 +95,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.7.0'
+$AppVersion = '1.7.1'
 
 $ErrorActionPreference = 'Stop'
 
@@ -305,7 +305,7 @@ function Resolve-ZapretConfig {
 function Get-SettingsFile {
     $base = $env:LOCALAPPDATA
     if (-not $base) { $base = $scriptDir }
-    return (Join-Path (Join-Path $base 'discord-media-fix') 'last-config.txt')
+    return (Join-Path (Join-Path $base 'discord-media-hosts-fix') 'last-config.txt')
 }
 
 function Get-LastChoice {
@@ -597,7 +597,7 @@ function Start-Discord {
 }
 
 Write-Step ''
-Write-Step ("=== Discord media fix v{0} (zapret + hosts) ===" -f $AppVersion) 'Cyan'
+Write-Step ("=== Discord media hosts fix v{0} (zapret + hosts) ===" -f $AppVersion) 'Cyan'
 
 # ---------- undo ----------
 if ($Remove) {
