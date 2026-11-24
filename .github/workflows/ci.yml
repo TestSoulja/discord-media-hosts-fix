@@ -20,9 +20,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build the release archive
-        shell: pwsh
+        shell: powershell
         run: .\build-release.ps1
 
       - name: Run the script test suite
-        shell: pwsh
+        shell: powershell
         run: .\tests\fix-discord-media.tests.ps1

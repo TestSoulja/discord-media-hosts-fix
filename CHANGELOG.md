@@ -14,6 +14,8 @@ Every release is a git tag `v<version>` (for example `v1.3.0`), and the release
 archive `discord-media-hosts-fix.zip` (`discord-media-fix.zip` before 1.7.1)
 always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
+The workflow builds it with the same Windows PowerShell as the documented local
+command, so the released archive is byte-identical to a local rebuild.
 
 ## [1.8.0] - 2026-11-24
 
@@ -21,7 +23,8 @@ always contains exactly the three working files:
 
 - `build-release.ps1` builds the release archive reproducibly (CRLF, fixed zip
   timestamps) together with `SHA256SUMS` and release notes taken from this
-  changelog. It refuses a tag that does not match `$AppVersion`, and stops on a
+  changelog; the same commit built with the same Windows PowerShell gives the
+  same bytes. It refuses a tag that does not match `$AppVersion`, and stops on a
   PowerShell syntax error or a stale README/CHANGELOG version.
 - `.github/workflows/release.yml` publishes a pushed `v*` tag: it builds from
   the tagged commit with that script and attaches the archive and `SHA256SUMS`

@@ -31,7 +31,7 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Build the archive, checksum and notes
-        shell: pwsh
+        shell: powershell
         env:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: .\build-release.ps1 -Tag $env:RELEASE_TAG
