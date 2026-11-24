@@ -21,8 +21,11 @@
 
   Running the .bat is the whole interaction: elevation, config choice, the
   bypass restart and the Discord restart are automatic. If nothing works, the
-  script says WHY (blocked by name or the addresses themselves are dropped)
-  and leaves hosts unchanged instead of pinning dead addresses.
+  script says WHY and leaves hosts unchanged instead of pinning dead addresses.
+  It also says what exactly is blocked: only port 443 (a local redirect could
+  still help), the addresses themselves (only a tunnel helps), or the TLS
+  handshake (blocked by name - no port and no address help). When a local
+  antivirus or proxy re-signs HTTPS, it names that too.
 
   It is a one-shot fix: no service, no scheduled task, no autostart, nothing
   left running after it returns. Run it again only when you choose to.
@@ -110,7 +113,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.8.1'
+$AppVersion = '1.9.0'
 
 $ErrorActionPreference = 'Stop'
 
@@ -156,6 +159,18 @@ $preferred = @(
     '162.159.136.232',
     '162.159.129.233'
 )
+
+# Ports Cloudflare serves the same hostname on. Discord always uses 443; the
+# others exist only to tell "the port is cut" from "the address is dropped".
+$altPorts = @(2053, 2083, 2087, 2096)
+
+# Vendors that re-sign HTTPS with their own root certificate to inspect it. A
+# public CA is never named after security software, so a match is proof.
+$tlsInterceptors = '(?i)kaspersky|eset|avast|avg|bitdefender|dr\.?web|avira|comodo|sophos|trend ?micro|zscaler|fortinet|palo ?alto|cisco|netskope|blue ?coat|mcafee|g ?data|emsisoft|adguard|qihoo'
+
+# How long a started config gets to show winws.exe before the start counts as
+# failed. Tests shorten it; 30 s is what a real machine needs with antivirus.
+$winwsStartWaitSec = 30
 
 function Write-Step {
     param([string]$Text, [string]$Color = 'Gray')
@@ -247,12 +262,26 @@ function Start-ZapretConfig {
     Write-Step ("Starting the bypass: {0}" -f (Split-Path -Leaf $Path)) 'Gray'
     Start-Process -FilePath $Path -WorkingDirectory (Split-Path -Parent $Path) | Out-Null
 
-    $deadline = (Get-Date).AddSeconds(30)
+    $deadline = (Get-Date).AddSeconds($winwsStartWaitSec)
     while ((Get-Date) -lt $deadline -and -not (Test-Winws)) {
         Start-Sleep -Milliseconds 400
     }
     if (-not (Test-Winws)) {
-        Write-Step 'winws.exe did not appear within 30 s.' 'Yellow'
+        Write-Step ("winws.exe did not appear within {0} s." -f $winwsStartWaitSec) 'Yellow'
+        # A missing file and a file that never starts look the same in the process
+        # list but need different advice: one is an antivirus, the other a block
+        # or a broken bundle.
+        $folder = Split-Path -Parent $Path
+        $exe = @((Join-Path $folder 'bin\winws.exe'), (Join-Path $folder 'winws.exe')) |
+            Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if (-not $exe) {
+            Write-Step 'The file itself is gone - something deleted it, usually an antivirus.' 'Yellow'
+            Write-Step 'Restore the zapret bundle, or allow its folder in the antivirus.' 'Yellow'
+        }
+        else {
+            Write-Step 'The file is there, but no process started - a security product may block it.' 'Yellow'
+            Write-Step 'Check the antivirus log, or allow the zapret folder, then run this again.' 'Yellow'
+        }
         return $false
     }
     Start-Sleep -Seconds 3
@@ -443,9 +472,53 @@ function Get-TextWithoutPin {
     return [regex]::Replace($Text, $pattern, '')
 }
 
-# Probes the endpoint through curl.exe with -s (silent), so a timeout never
-# becomes a terminating NativeCommandError. Returns ok / dead / nocurl.
-# The timeout is generous on purpose: a throttled line needs more than 5 s.
+# One HTTPS request that keeps the reason it failed. curl's exit code is the only
+# thing that separates "nobody listens" (7) from "the connection is dropped" (28)
+# from "TCP is fine, TLS is killed" (35/56) - and to the person reading the
+# verdict those three are completely different problems.
+function Get-HttpsProbe {
+    param(
+        [string]$ResolveTo = '',
+        [string]$HostName = 'media.discordapp.net',
+        [int]$Port = 443,
+        [int]$TimeoutSec = 8
+    )
+
+    if (-not (Test-Path -LiteralPath $curlPath)) { return @{ State = 'nocurl'; Http = ''; Exit = -1 } }
+
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $curlArgs = @('-s', '-o', 'NUL', '-m', "$TimeoutSec", '-w', '%{http_code}')
+        if ($ResolveTo) { $curlArgs += @('--resolve', "${HostName}:${Port}:$ResolveTo") }
+        $curlArgs += ("https://{0}:{1}/" -f $HostName, $Port)
+
+        $code = [string](& $curlPath @curlArgs 2>$null)
+        $exit = $LASTEXITCODE
+
+        if ($exit -eq 0) {
+            if ($code -match '^[1-5]\d\d$') { return @{ State = 'ok'; Http = $code; Exit = 0 } }
+            return @{ State = 'odd'; Http = $code; Exit = 0 }
+        }
+        if ($exit -eq 5 -or $exit -eq 6) { return @{ State = 'dns'; Http = $code; Exit = $exit } }
+        if ($exit -eq 7) { return @{ State = 'refused'; Http = $code; Exit = 7 } }
+        if ($exit -eq 28) { return @{ State = 'timeout'; Http = $code; Exit = 28 } }
+        if (@(35, 51, 53, 54, 56, 58, 59, 60, 64, 66, 77, 80, 82, 83, 90, 91) -contains $exit) {
+            return @{ State = 'tls'; Http = $code; Exit = $exit }
+        }
+        return @{ State = 'error'; Http = $code; Exit = $exit }
+    }
+    catch {
+        return @{ State = 'error'; Http = ''; Exit = -1 }
+    }
+    finally {
+        $ErrorActionPreference = $saved
+    }
+}
+
+# Boolean view of the same request: ok / dead / nocurl, for the callers that only
+# care whether the address answers at all. The timeout is generous on purpose:
+# a throttled line needs more than 5 s.
 function Test-MediaEndpoint {
     param(
         [string]$ResolveTo = '',
@@ -453,26 +526,10 @@ function Test-MediaEndpoint {
         [int]$TimeoutSec = 8
     )
 
-    if (-not (Test-Path -LiteralPath $curlPath)) { return 'nocurl' }
-
-    $saved = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $curlArgs = @('-s', '-o', 'NUL', '-m', "$TimeoutSec", '-w', '%{http_code}')
-        if ($ResolveTo) { $curlArgs += @('--resolve', "${HostName}:443:$ResolveTo") }
-        $curlArgs += "https://$HostName/"
-
-        $code = & $curlPath @curlArgs 2>$null
-        if ($LASTEXITCODE -ne 0) { return 'dead' }
-        if ($code -match '^[1-5]\d\d$') { return 'ok' }
-        return 'dead'
-    }
-    catch {
-        return 'dead'
-    }
-    finally {
-        $ErrorActionPreference = $saved
-    }
+    $probe = Get-HttpsProbe -ResolveTo $ResolveTo -HostName $HostName -TimeoutSec $TimeoutSec
+    if ($probe.State -eq 'ok') { return 'ok' }
+    if ($probe.State -eq 'nocurl') { return 'nocurl' }
+    return 'dead'
 }
 
 # True as soon as one of the addresses answers for the Discord media host.
@@ -516,6 +573,116 @@ function Test-ControlHost {
     }
     catch { return 'fail' }
     finally { $ErrorActionPreference = $saved }
+}
+
+# Which of the four blocks is it? Short, testable verdicts:
+#   port    - 443 is cut, another Cloudflare port answers: a redirect could work
+#   tls     - TCP 443 connects, the handshake dies: blocked by name
+#   refused - this machine refuses: firewall or antivirus, not the provider
+#   ip      - everything is dropped: only another path (tunnel/proxy) helps
+function Get-PortVerdict {
+    param(
+        [string[]]$Addresses,
+        [string]$HostName = 'media.discordapp.net',
+        [int]$TimeoutSec = 5
+    )
+
+    $unknown = @{ Kind = 'unknown'; Port = 0; Ip = ''; Detail = '' }
+    if (-not (Test-Path -LiteralPath $curlPath)) { return $unknown }
+
+    $targets = @($Addresses | Where-Object { $_ } | Select-Object -First 2)
+    if ($targets.Count -eq 0) { return $unknown }
+
+    $sawTls     = $false
+    $sawTimeout = $false
+    $allRefused = $true
+    $tcpOpen    = ''
+    $first      = $targets[0]
+
+    for ($i = 0; $i -lt $targets.Count; $i++) {
+        $ip = $targets[$i]
+        # The first address gets the whole port list; a second one only the most
+        # likely port, so a dead network cannot stretch this check to a minute.
+        $ports = $altPorts
+        if ($i -gt 0) { $ports = @(2053) }
+
+        foreach ($port in $ports) {
+            $probe = Get-HttpsProbe -ResolveTo $ip -HostName $HostName -Port $port -TimeoutSec $TimeoutSec
+            if ($probe.State -eq 'nocurl') { return $unknown }
+            if ($probe.State -eq 'ok' -or $probe.State -eq 'odd') {
+                return @{ Kind = 'port'; Port = $port; Ip = $ip; Detail = $probe.State }
+            }
+            if ($probe.State -eq 'tls') { $sawTls = $true }
+            if ($probe.State -eq 'timeout') { $sawTimeout = $true }
+            if ($probe.State -ne 'refused') { $allRefused = $false }
+        }
+
+        if (-not $tcpOpen -and -not $sawTimeout) {
+            if (Test-TcpPort -Address $ip -Port 443 -TimeoutMs ($TimeoutSec * 1000)) { $tcpOpen = $ip }
+        }
+    }
+
+    if ($sawTls -or $tcpOpen) { return @{ Kind = 'tls'; Port = 0; Ip = $tcpOpen; Detail = '' } }
+    if ($allRefused) { return @{ Kind = 'refused'; Port = 0; Ip = $first; Detail = '' } }
+    return @{ Kind = 'ip'; Port = 0; Ip = $first; Detail = '' }
+}
+
+# Issuer of the certificate a site actually presents, empty when nothing answers.
+# The synchronous handshake is bounded by the socket timeouts: a filter that
+# accepts TCP and then says nothing moves the handshake to the timeout, not a hang.
+function Get-TlsIssuer {
+    param([string]$HostName = 'discord.com', [int]$Port = 443, [int]$TimeoutMs = 6000)
+
+    $client = New-Object Net.Sockets.TcpClient
+    $ssl = $null
+    try {
+        $client.ReceiveTimeout = $TimeoutMs
+        $client.SendTimeout = $TimeoutMs
+
+        $task = $client.ConnectAsync($HostName, $Port)
+        if (-not $task.Wait($TimeoutMs)) { return '' }
+        if (-not $client.Connected) { return '' }
+
+        $ssl = New-Object Net.Security.SslStream($client.GetStream(), $false, { $true })
+        $ssl.AuthenticateAsClient($HostName)
+
+        $cert = New-Object Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
+        return [string]$cert.Issuer
+    }
+    catch { return '' }
+    finally {
+        if ($ssl) { try { $ssl.Dispose() } catch { } }
+        try { $client.Close() } catch { }
+    }
+}
+
+# A security product that inspects HTTPS has to re-sign the certificate with its
+# own root. Seeing such an issuer is proof that it sits in the middle, which
+# explains TLS failures that no address change can cure.
+function Get-TlsInterceptor {
+    param([string[]]$HostNames = @('discord.com', 'example.com'))
+
+    foreach ($name in $HostNames) {
+        $issuer = Get-TlsIssuer -HostName $name
+        if (-not $issuer) { continue }
+        if ($issuer -match $tlsInterceptors) { return @{ Host = $name; Issuer = $issuer } }
+    }
+    return $null
+}
+
+# Is the pin block really in the file? A security product may accept the write and
+# then put the old content back, so the write is verified instead of assumed.
+function Test-PinBlock {
+    param([string]$Text, [string[]]$Addresses, [string[]]$Names)
+
+    if (-not $Text) { return $false }
+    if (-not ($Text.Contains($pinStart) -and $Text.Contains($pinEnd))) { return $false }
+    foreach ($name in $Names) {
+        foreach ($ip in $Addresses) {
+            if (-not $Text.Contains("$ip $name")) { return $false }
+        }
+    }
+    return $true
 }
 
 # Probes candidate addresses and keeps the ones that answer. Bounded in time:
@@ -694,6 +861,16 @@ if ($Remove) {
     try {
         $backup = Save-HostsText -Path $HostsFile -Text $newText -Kind $current.Kind
         & ipconfig /flushdns | Out-Null
+
+        $after = Get-HostsText -Path $HostsFile
+        if ($after.Text -match [regex]::Escape($pinStart)) {
+            Write-Step ''
+            Write-Step 'The pin block came back right after it was removed.' 'Red'
+            Write-Step 'Something protects the hosts file (an antivirus or "Controlled folder access").' 'Red'
+            Write-Step ("Backup before the change: {0}" -f $backup) 'Gray'
+            exit 1
+        }
+
         Write-Step "Done. Backup: $backup" 'Green'
         if ($RestartDiscord) {
             Restart-DiscordClient -Reason 'requested'
@@ -1032,12 +1209,53 @@ if ($needFix) {
         Write-Step 'No address answered.' 'Red'
 
         if ($reason -eq 'blackhole') {
-            Write-Step 'None of them accepted a connection at all. Something on the network drops' 'Yellow'
-            Write-Step 'these addresses (or slows them to a standstill), so another address cannot help.' 'Yellow'
+            # Which of the four blocks is it? Only the port case leaves a way out
+            # without a tunnel, so this is worth the half minute it can take.
             Write-Step ''
-            Write-Step 'What actually works: send only Discord through a VPN (split tunneling)' 'Cyan'
-            Write-Step 'or set a proxy for Discord. A VPN for the whole PC is the blunt version.' 'Cyan'
-            Write-Step ('Details: TCP 443 refused on {0}.' -f (($candidates | Select-Object -First 3) -join ', ')) 'DarkGray'
+            Write-Step 'Checking what exactly is blocked - up to half a minute.' 'Gray'
+            $ports = Get-PortVerdict -Addresses @($candidates | Select-Object -First 3)
+
+            if ($ports.Kind -eq 'port') {
+                Write-Step ("Port {0} answers for {1}, but port 443 does not." -f $ports.Port, $ports.Ip) 'Green'
+                Write-Step 'So the block is on the port, not on the address or on the name.' 'Yellow'
+                Write-Step ''
+                Write-Step ("A local redirect 127.0.0.1:443 -> {0}:{1} can carry the images." -f $ports.Ip, $ports.Port) 'Cyan'
+                Write-Step 'It needs a small redirect tool running in the background, and this one-shot' 'Cyan'
+                Write-Step 'fix deliberately installs nothing like that. Meanwhile: a proxy or a tunnel.' 'Cyan'
+            }
+            elseif ($ports.Kind -eq 'tls') {
+                Write-Step 'Port 443 accepts TCP, but the TLS handshake is killed.' 'Yellow'
+                Write-Step 'That is a block by name: another port or another address cannot help.' 'Yellow'
+                Write-Step ''
+                Write-Step 'What actually works: another zapret config, or a tunnel/proxy for Discord.' 'Cyan'
+            }
+            elseif ($ports.Kind -eq 'refused') {
+                Write-Step 'The machine refused the connection itself - this is not your provider.' 'Yellow'
+                Write-Step 'A local firewall or an antivirus is blocking curl.exe or the port.' 'Yellow'
+                Write-Step ''
+                Write-Step 'What actually works: allow curl.exe and PowerShell in the firewall, check' 'Cyan'
+                Write-Step 'the antivirus log, then run this file again.' 'Cyan'
+            }
+            else {
+                Write-Step 'None of them accepted a connection at all. Something on the network drops' 'Yellow'
+                Write-Step 'these addresses (or slows them to a standstill), so another address cannot help.' 'Yellow'
+                Write-Step ''
+                Write-Step 'What actually works: send only Discord through a VPN (split tunneling)' 'Cyan'
+                Write-Step 'or set a proxy for Discord. A VPN for the whole PC is the blunt version.' 'Cyan'
+            }
+
+            # An antivirus that inspects HTTPS re-signs every certificate with its
+            # own root, and that alone can break the handshake to the media hosts.
+            $interceptor = Get-TlsInterceptor
+            if ($interceptor) {
+                Write-Step ''
+                Write-Step ("HTTPS here is signed by {0}" -f $interceptor.Issuer) 'Red'
+                Write-Step ("(not by a public CA - that is what inspecting {0} looks like)." -f $interceptor.Host) 'Yellow'
+                Write-Step 'So a local security product may be the reason, not your provider.' 'Yellow'
+                Write-Step 'Turn its HTTPS scanning off for a test and run this file again.' 'Cyan'
+            }
+
+            Write-Step ('Details: TCP 443 does not connect to {0}.' -f (($candidates | Select-Object -First 3) -join ', ')) 'DarkGray'
         }
         else {
             if ($controlState -eq 'ok') {
@@ -1094,8 +1312,22 @@ if ($needFix) {
     }
 
     if ($alive.Count -eq 0) {
+        # Only reachable when curl.exe is missing: with curl present the branch
+        # above already explained the failure and stopped.
+        Write-Step ''
+        Write-Step 'curl.exe was not found, so no address could be checked.' 'Red'
+        Write-Step 'It ships with Windows 10 1803+ and Windows 11; a security product may hide it.' 'Yellow'
+
+        if (-not $Force) {
+            Write-Step ''
+            Write-Step 'hosts was left unchanged - nothing is pinned without a check.' 'Yellow'
+            Write-Step 'Update Windows, or run this file again with -Force to pin a known-good list.' 'Cyan'
+            exit 2
+        }
+
         $alive = @('162.159.141.232', '162.159.131.233', '162.159.132.233', '162.159.133.233')
-        Write-Step ("curl.exe not found - using a known-good list: {0}" -f ($alive -join ', ')) 'Yellow'
+        Write-Step '-Force was passed - pinning a known-good list that could not be checked:' 'Yellow'
+        Write-Step ("  {0}" -f ($alive -join ', ')) 'Gray'
     }
 
     Write-Step ''
@@ -1125,6 +1357,19 @@ if ($needFix) {
         try {
             $backup = Save-HostsText -Path $HostsFile -Text $newText -Kind $current.Kind
             & ipconfig /flushdns | Out-Null
+
+            # The write is verified, not assumed: a security product can accept it
+            # and then restore the old file a moment later.
+            $written = Get-HostsText -Path $HostsFile
+            if (-not (Test-PinBlock -Text $written.Text -Addresses $alive -Names $Hosts)) {
+                Write-Step ''
+                Write-Step 'The address list disappeared right after it was written.' 'Red'
+                Write-Step 'Something protects the hosts file (an antivirus or "Controlled folder access"),' 'Red'
+                Write-Step 'so the fix cannot stay. Allow the change and run this file again.' 'Yellow'
+                Write-Step ("Backup of the file before the write: {0}" -f $backup) 'Gray'
+                exit 1
+            }
+
             Write-Step "Address list updated. Backup: $backup" 'Green'
             Write-Step 'DNS cache cleared.' 'Green'
         }

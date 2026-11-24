@@ -6,7 +6,7 @@ The script checks that no VPN is carrying the traffic, starts your zapret config
 
 > **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
 
-**Version 1.8.1** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
+**Version 1.9.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -227,6 +227,7 @@ Safety details:
 - the read-only attribute and the file encoding (ANSI or UTF-8 with BOM) are preserved;
 - re-running is idempotent: an old block is replaced, other entries are untouched;
 - no changes to DNS settings, firewall, proxy, routing or the registry;
+- nothing about the antivirus or firewall is changed either: no exclusions, no settings, no reading of its logs. The script only looks at the certificate a site presents and reports what it sees;
 - zapret itself is not modified — the script only starts the config you already have;
 - other sites, LAN names and `cdn.discordapp.com` are not affected;
 - it is a one-shot run: **no service, no scheduled task, no autostart entry, no background process**. When the script exits, nothing of it keeps running, so it cannot reset, restart or re-pin anything on its own later;
@@ -239,6 +240,7 @@ Safety details:
 - **Does not work with a VPN or TUN tunnel enabled.** The pinned addresses are reached directly through your ISP; inside a tunnel they are not available, and zapret itself also does not work through a VPN. The script checks this itself: if the default route goes through a tunnel it stops with exit code `3` and writes nothing. A tunnel that is up but does not carry the default route (split tunneling) is fine and only gets a note. `-IgnoreVpn` forces a run.
 - If the block covers every address in the range, no `hosts` entry can help: this method is done, use a tunnel or a proxy for Discord instead.
 - If the block is by name (not by address), the pins are not the cure either — another zapret config or a tunnel is. The script tells these two cases apart and says which one you hit.
+- If only port 443 is cut (Cloudflare also answers on 2053, 2083, 2087 and 2096), a local redirect `127.0.0.1:443 -> <address>:2053` can carry the images — but that is a background tool, not this one-shot fix. The script says when this is your case.
 - The fix is per hostname and per machine. It is not a VPN and does not hide traffic.
 - IPv6-only networks that resolve the CDN over IPv6 are out of scope: the block pins IPv4 addresses.
 
@@ -248,13 +250,24 @@ Safety details:
 
 **"VPN is on: … Nothing was changed." (exit code `3`)** — the VPN carries all traffic, so the fixed addresses are unreachable. Turn the VPN off and run the file again, send only Discord through the tunnel (split tunneling), or pass `-IgnoreVpn` if you know the tunnel does not carry Discord traffic.
 
-**"No address answered"** — followed by one of three explanations:
+**"No address answered"** — followed by one of these explanations:
 
 - *"discord.com fails too"* — the bypass is not beating this DPI at all, so the media hosts fail for the same reason. The script already tried every config in the folder; the next moves are a newer zapret build (then run this file again — it re-tries everything), or a tunnel/proxy for Discord.
 - *"every connection to media.discordapp.net is cut off"* — Discord itself loads through the bypass, only the media hosts are blocked by name. Changing addresses cannot fix that either; the same next steps: a newer zapret build, then a tunnel/proxy.
+- *"Port 2053 answers for … but port 443 does not"* — only the port is cut, not the address and not the name. A local redirect `127.0.0.1:443 -> <address>:2053` keeps TLS valid and can carry the images, but it needs a small redirect tool running in the background. This one-shot fix deliberately installs nothing like that: use a proxy or a tunnel for now.
+- *"Port 443 accepts TCP, but the TLS handshake is killed"* — the block is by name, so neither another port nor another address helps. Another zapret config, or a tunnel/proxy for Discord.
+- *"The machine refused the connection itself"* — a local firewall or an antivirus blocks `curl.exe` or the port. Allow `curl.exe` and PowerShell in the firewall, check the antivirus log, then run the file again.
 - *"None of them accepted a connection at all"* — the addresses themselves are dropped or slowed to a standstill. No config helps; the way out is a tunnel for Discord only (VPN with split tunneling) or a proxy.
 
-In both cases `hosts` is left unchanged on purpose: no dead address is pinned. The gray `Details:` line keeps the technical fact, useful when you report the problem.
+If something local inspects HTTPS, the report adds a line: *"HTTPS here is signed by CN=Kaspersky Anti-Virus Personal Root Certificate"* means an antivirus or proxy is decrypting the connection, and its own certificate can break the handshake to the media hosts. Turn its HTTPS scanning off for a test — no address change can cure that.
+
+In every case `hosts` is left unchanged on purpose: no dead address is pinned. The gray `Details:` line keeps the technical fact, useful when you report the problem.
+
+**"curl.exe was not found"** — the addresses cannot be checked, so nothing is pinned and the script exits with code `2` (Windows 10 1803+ and Windows 11 ship `curl.exe`; a security product may hide it). Update Windows, allow `curl.exe`, or pass `-Force` to pin a known-good list knowing it was not verified.
+
+**"The address list disappeared right after it was written"** — something protects the `hosts` file and restored it (an antivirus, or Defender *Controlled folder access*). The fix cannot stay that way; allow the change and run the file again. Exit code `1`.
+
+**"winws.exe did not appear … The file itself is gone"** — an antivirus deleted the binary. Restore the zapret bundle or allow its folder, then run the file again.
 
 **"Could not write hosts"** — usually Microsoft Defender *Controlled folder access*. Allow the change for a minute, or add `powershell.exe` as an allowed app.
 
@@ -275,7 +288,7 @@ This is a versioned project, not a loose set of scripts.
 - Release checklist: bump `$AppVersion` → update the version line in README → add a CHANGELOG entry → commit → tag `v<version>` → push the tag.
 - Manual fallback: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<version>`, then upload `dist/discord-media-hosts-fix.zip` and `dist/SHA256SUMS` to the release.
 
-The current release is **v1.8.1**.
+The current release is **v1.9.0**.
 
 ## License
 
@@ -470,17 +483,25 @@ This one works - keeping it.
 - **Не работает при включённом VPN/TUN.** Адреса закреплены для прямого подключения через провайдера; внутри туннеля они недоступны, да и zapret с VPN не работает. Скрипт проверяет это сам: если default route идёт в туннель — выходит с кодом `3` и ничего не пишет. Туннель, который просто поднят, но трафик через него не идёт (split tunneling), не мешает — будет только пометка в консоли. `-IgnoreVpn` запускает вопреки проверке.
 - Если сеть режет весь диапазон, `hosts` не спасёт: нужен туннель или прокси для Discord.
 - Если блок по имени, а не по адресу, пины тоже не лекарство: нужен другой конфиг zapret или туннель. Скрипт различает эти случаи и говорит, какой именно у вас.
+- Если режут только порт 443 (Cloudflare отвечает ещё на 2053, 2083, 2087 и 2096), помочь может локальный редирект `127.0.0.1:443 -> <адрес>:2053` — но это фоновый инструмент, а не этот одноразовый фикс. Скрипт прямо говорит, когда у вас именно такой случай.
 - Это не VPN и не сокрытие трафика, а локальная таблица адресов.
 - Закрепляются IPv4-адреса.
 
 ### Если не сработало
 
 - **«VPN is on: … Nothing was changed.» (код выхода `3`)** — VPN несёт весь трафик, закреплённые адреса недоступны. Выключите VPN и запустите снова, заворачивайте в туннель только Discord (split tunneling), либо добавьте `-IgnoreVpn`, если точно знаете, что Discord в туннель не попадает.
-- **«No address answered»** — дальше одно из трёх объяснений:
+- **«No address answered»** — дальше одно из объяснений:
   - *«discord.com fails too»* — обход вообще не берёт этот DPI, поэтому и медиа-хосты падают по той же причине. Все конфиги в папке скрипт уже перебрал; дальше — свежая сборка zapret (затем запустите файл снова, он переберёт всё заново) либо туннель/прокси для Discord.
   - *«every connection to media.discordapp.net is cut off»* — сам Discord через обход грузится, режут только медиа-хосты по имени. Сменой адресов это тоже не лечится: те же шаги — свежая сборка zapret, затем туннель/прокси.
+  - *«Port 2053 answers for … but port 443 does not»* — режут только порт, не адрес и не имя. Локальный редирект `127.0.0.1:443 -> <адрес>:2053` сохраняет валидный TLS и может вернуть картинки, но для него нужен небольшой фоновый инструмент. Этот одноразовый фикс такое намеренно не устанавливает: пока — прокси или туннель.
+  - *«Port 443 accepts TCP, but the TLS handshake is killed»* — блок по имени: ни другой порт, ни другой адрес не помогут. Нужен другой конфиг zapret либо туннель/прокси.
+  - *«The machine refused the connection itself»* — соединение отвергает сама машина: локальный файрвол или антивирус блокирует `curl.exe` или порт. Разрешите `curl.exe` и PowerShell в файрволе, посмотрите лог антивируса и запустите файл снова.
   - *«None of them accepted a connection at all»* — режут сами адреса (или душат так, что соединение не встаёт). Конфиги не помогут: нужен туннель только для Discord (VPN со split tunneling) или прокси.
-  Во всех трёх случаях `hosts` намеренно не меняется: мёртвые адреса не пишутся. Техническая деталь осталась в серой строке `Details:` — её удобно приложить, если сообщаете о проблеме.
+  Если какая-то локальная защита расшифровывает HTTPS, скрипт называет её: строка *«HTTPS here is signed by CN=Kaspersky Anti-Virus Personal Root Certificate»* означает, что соединение вскрывает антивирус, и его же сертификат может ломать рукопожатие с медиа-хостами. Выключите его HTTPS-сканирование на один тест — сменой адреса это не лечится.
+  Во всех случаях `hosts` намеренно не меняется: мёртвые адреса не пишутся. Техническая деталь осталась в серой строке `Details:` — её удобно приложить, если сообщаете о проблеме.
+- **«curl.exe was not found»** — проверить адреса нечем, поэтому ничего не пишется и скрипт выходит с кодом `2` (`curl.exe` есть в Windows 10 1803+ и Windows 11; его может скрывать защита). Обновите Windows, разрешите `curl.exe` либо запустите с `-Force`, понимая, что список не проверен.
+- **«The address list disappeared right after it was written»** — что-то защищает `hosts` и вернуло файл обратно (антивирус или Defender *Controlled folder access*). Так фикс не удержится: разрешите изменение и запустите снова. Код выхода `1`.
+- **«winws.exe did not appear … The file itself is gone»** — антивирус удалил бинарник. Восстановите бандл zapret или разрешите его папку, затем запустите снова.
 - **«All Discord media hosts answer — the pins are fine, hosts left as is»** — скрипт проверил все три хоста через работающий обход, каждый ответил, поэтому `hosts` он намеренно не трогал. Это нормальное состояние при втором и последующих запусках. Если в Discord картинки всё равно битые — закройте его полностью (включая иконку в трее) и откройте снова: работающий клиент держит старые адреса до перезапуска. Перепроверить и перепинить принудительно — запуск с `-Force`. При включённом VPN эта проверка тоже может пройти, хотя Discord будет ломаться. Если клиент открыт, скрипт теперь называет его и предлагает `-RestartDiscord` — перезапустит сам.
 - **«Could not write hosts»** — чаще всего Defender *Controlled folder access*: разрешите изменение на минуту.
 - **Блок записался, но картинок нет** — полностью закройте Discord (включая иконку в трее) и откройте снова либо запустите файл с `-RestartDiscord`.
@@ -498,4 +519,4 @@ This one works - keeping it.
 - Порядок выпуска: поднять `$AppVersion` → обновить строку версии в README → добавить запись в CHANGELOG → коммит → тег `v<версия>` → пуш тега.
 - Запасной путь: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<версия>`, затем загрузить `dist/discord-media-hosts-fix.zip` и `dist/SHA256SUMS` в релиз.
 
-Текущий релиз — **v1.8.1**.
+Текущий релиз — **v1.9.0**.

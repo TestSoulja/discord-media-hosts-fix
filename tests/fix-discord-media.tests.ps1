@@ -33,7 +33,12 @@ function New-Variant {
         [switch]$ForceBypass,
         [switch]$AliveStub,
         [switch]$AliveEmpty,
-        [switch]$VpnStub
+        [switch]$VpnStub,
+        [switch]$NoCurl,
+        [switch]$RevertHosts,
+        [switch]$FastWinwsWait,
+        [switch]$NoWinws,
+        [string]$ExtraStubs = ''
     )
 
     $code = $src
@@ -64,6 +69,17 @@ function New-Variant {
             '$bypassChanged = [bool]($lastStarted -and $bypassUp)',
             '$bypassChanged = $true')
     }
+    if ($NoCurl) {
+        $code = $code.Replace(
+            '$curlPath     = Join-Path $env:SystemRoot ''System32\curl.exe''',
+            '$curlPath     = Join-Path $env:TEMP ''no-such-curl.exe''')
+        if ($code.Contains("'System32\curl.exe'")) {
+            throw ("Test harness failed to hide curl.exe in '{0}' - refusing to run it." -f $Name)
+        }
+    }
+    if ($FastWinwsWait) {
+        $code = $code.Replace('$winwsStartWaitSec = 30', '$winwsStartWaitSec = 1')
+    }
 
     $stubs = @"
 function Test-MediaEndpoint { param([string]`$ResolveTo = '', [string]`$HostName = 'media.discordapp.net', [int]`$TimeoutSec = 8) return '$Media' }
@@ -73,6 +89,9 @@ function Test-ControlHost { param([string]`$HostName = 'discord.com', [int]`$Tim
 function Stop-Winws { Write-Host '[test] winws stop skipped' -ForegroundColor DarkGray }
 function Get-VpnDefaultRoute { return `$null }
 function Get-VpnAdapters { return @() }
+function Get-PortVerdict { param([string[]]`$Addresses, [string]`$HostName = 'media.discordapp.net', [int]`$TimeoutSec = 5) return @{ Kind = 'ip'; Port = 0; Ip = ''; Detail = '' } }
+function Get-TlsIssuer { param([string]`$HostName = 'discord.com', [int]`$Port = 443, [int]`$TimeoutMs = 6000) return '' }
+function Get-TlsInterceptor { param([string[]]`$HostNames = @('discord.com','example.com')) return `$null }
 "@
     if ($AliveStub) {
         $stubs += @"
@@ -91,6 +110,34 @@ function Get-VpnDefaultRoute { return [pscustomobject]@{ Name = 'TestVPN'; Inter
 function Get-VpnAdapters { return @() }
 "@
     }
+    if ($RevertHosts) {
+        # A hosts file that loses the block again right after the write: the shape
+        # of "a security product restored the old file".
+        $stubs += "`r`n" + @'
+$script:hostsReads = 0
+function Get-HostsText { param([string]$Path)
+    $script:hostsReads++
+    $lines = @()
+    if (Test-Path -LiteralPath $Path) { $lines = [IO.File]::ReadAllLines($Path) }
+    if ($script:hostsReads -gt 1) {
+        $lines = @($lines | Where-Object {
+            $_ -notmatch 'discord-media-pin' -and
+            $_ -notmatch '^(162\.159\.|media\.discordapp|images-ext)'
+        })
+    }
+    return @{ Text = (($lines -join [Environment]::NewLine) + [Environment]::NewLine); Kind = 'Default' }
+}
+'@
+    }
+    if ($ExtraStubs) { $stubs += "`r`n" + $ExtraStubs }
+    if ($NoWinws) {
+        # A zapret folder that passes the folder check but whose binary never
+        # starts: what an antivirus leaving the folder intact looks like.
+        $stubs += @"
+function Test-Winws { return `$false }
+function Start-Process { param([string]`$FilePath, [string]`$WorkingDirectory, `$ArgumentList, [switch]`$Verb) }
+"@
+    }
 
     # A stub defined next to the preconditions is too late for the undo branch:
     # that branch runs before it. Rename the real implementations so a stub is
@@ -99,8 +146,11 @@ function Get-VpnAdapters { return @() }
     $stubTargets = @(
         'Test-MediaEndpoint', 'Get-RunningDiscordClient', 'Start-Discord',
         'Test-ControlHost', 'Stop-Winws', 'Get-VpnDefaultRoute', 'Get-VpnAdapters',
-        'Get-AliveAddresses', 'Get-BlockDiagnosis'
+        'Get-AliveAddresses', 'Get-BlockDiagnosis',
+        'Get-PortVerdict', 'Get-TlsIssuer', 'Get-TlsInterceptor'
     )
+    if ($RevertHosts) { $stubTargets += 'Get-HostsText' }
+    if ($NoWinws) { $stubTargets += 'Test-Winws' }
     foreach ($fn in $stubTargets) {
         $code = $code.Replace(('function {0} {{' -f $fn), ('function {0}-Real {{' -f $fn))
     }
@@ -178,6 +228,11 @@ foreach ($word in $persistence) {
         [IO.File]::ReadAllText((Join-Path $root $_)).Contains($word)
     })
     Check ("static: no '{0}' in the shipped files" -f $word) ($found.Count -eq 0) ($found -join ', ')
+}
+
+# The fix names the security software when it interferes; it never weakens it.
+foreach ($word in @('Add-MpPreference', 'Set-MpPreference', 'ExclusionPath')) {
+    Check ("static: never changes antivirus settings ('{0}')" -f $word) (-not $src.Contains($word))
 }
 
 # ---------- version / conflict ----------
@@ -328,6 +383,69 @@ Check 'vpn: -IgnoreVpn continues' ($r.Exit -eq 0 -and (Has $r 'continuing becaus
 $noZapret = New-Variant -Name 'no-zapret' -SystemFile -Media 'ok' -Runner '@()'
 $r = Invoke-Script $noZapret @('-HostsFile', $hosts, '-IgnoreVpn')
 Check 'zapret missing: explains and continues' ($r.Exit -eq 0 -and (Has $r 'No zapret folder next to this file') -and (Has $r 'pins are fine')) ("exit=$($r.Exit)")
+
+# ---------- diagnostics: what exactly is blocked ----------
+$diagIp = New-Variant -Name 'diag-ip' -Media 'dead' -AliveEmpty -Runner '@()'
+New-HostsFile $hosts $plainHosts
+$before = File-Hash $hosts
+$r = Invoke-Script $diagIp @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'diagnostics: a dropped network says the addresses themselves are cut' ($r.Exit -eq 2 -and (Has $r 'None of them accepted a connection') -and (Has $r 'TCP 443 does not connect to')) ("exit=$($r.Exit)")
+Check 'diagnostics: a dropped network still leaves hosts alone' ((File-Hash $hosts) -eq $before)
+
+$portStub = @'
+function Get-PortVerdict { param([string[]]$Addresses, [string]$HostName = 'media.discordapp.net', [int]$TimeoutSec = 5) return @{ Kind = 'port'; Port = 2053; Ip = '162.159.141.232'; Detail = 'ok' } }
+'@
+$diagPort = New-Variant -Name 'diag-port' -Media 'dead' -AliveEmpty -Runner '@()' -ExtraStubs $portStub
+$r = Invoke-Script $diagPort @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'diagnostics: a port-only block points at the working port' ($r.Exit -eq 2 -and (Has $r 'Port 2053 answers for 162.159.141.232') -and (Has $r '127.0.0.1:443 -> 162.159.141.232:2053')) ("exit=$($r.Exit)")
+Check 'diagnostics: a port-only block does not send the user straight to a VPN' (-not (Has $r 'send only Discord through a VPN'))
+
+$tlsStub = @'
+function Get-PortVerdict { param([string[]]$Addresses, [string]$HostName = 'media.discordapp.net', [int]$TimeoutSec = 5) return @{ Kind = 'tls'; Port = 0; Ip = '162.159.141.232'; Detail = '' } }
+'@
+$diagTls = New-Variant -Name 'diag-tls' -Media 'dead' -AliveEmpty -Runner '@()' -ExtraStubs $tlsStub
+$r = Invoke-Script $diagTls @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'diagnostics: a killed handshake is named as a block by name' ($r.Exit -eq 2 -and (Has $r 'TLS handshake is killed') -and (Has $r 'block by name')) ("exit=$($r.Exit)")
+
+$refusedStub = @'
+function Get-PortVerdict { param([string[]]$Addresses, [string]$HostName = 'media.discordapp.net', [int]$TimeoutSec = 5) return @{ Kind = 'refused'; Port = 0; Ip = '162.159.141.232'; Detail = '' } }
+'@
+$diagRefused = New-Variant -Name 'diag-refused' -Media 'dead' -AliveEmpty -Runner '@()' -ExtraStubs $refusedStub
+$r = Invoke-Script $diagRefused @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'diagnostics: a local refusal blames the machine, not the provider' ($r.Exit -eq 2 -and (Has $r 'refused the connection itself') -and (Has $r 'firewall')) ("exit=$($r.Exit)")
+
+$mitmStub = @'
+function Get-TlsInterceptor { param([string[]]$HostNames = @('discord.com','example.com')) return @{ Host = 'discord.com'; Issuer = 'CN=Kaspersky Anti-Virus Personal Root Certificate, O=AO Kaspersky Lab' } }
+'@
+$diagMitm = New-Variant -Name 'diag-mitm' -Media 'dead' -AliveEmpty -Runner '@()' -ExtraStubs $mitmStub
+$r = Invoke-Script $diagMitm @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'diagnostics: an HTTPS-interceptor certificate is named' ($r.Exit -eq 2 -and (Has $r 'HTTPS here is signed by') -and (Has $r 'Kaspersky') -and (Has $r 'HTTPS scanning off')) ("exit=$($r.Exit)")
+
+# ---------- no curl: never pin blind ----------
+$noCurl = New-Variant -Name 'no-curl' -Media 'dead' -AliveEmpty -Runner '@()' -NoCurl
+New-HostsFile $hosts $plainHosts
+$before = File-Hash $hosts
+$r = Invoke-Script $noCurl @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'no curl: exit 2, nothing pinned, says why' ($r.Exit -eq 2 -and (Has $r 'curl.exe was not found') -and (Has $r 'nothing is pinned without a check') -and (File-Hash $hosts) -eq $before) ("exit=$($r.Exit)")
+
+$r = Invoke-Script $noCurl @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'no curl + -Force: pins the known-good list and admits it is unchecked' ($r.Exit -eq 0 -and (Has $r '-Force was passed') -and (Count-Lines $hosts '^162\.159\.') -eq 12) ("exit=$($r.Exit)")
+
+# ---------- hosts write that does not stick ----------
+$revert = New-Variant -Name 'revert' -Media 'dead' -AliveStub -Runner '@()' -RevertHosts
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $revert @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'revert: a write that does not stay is reported as a protected hosts file' ($r.Exit -eq 1 -and (Has $r 'disappeared right after it was written') -and (Has $r 'Controlled folder access')) ("exit=$($r.Exit)")
+Check 'revert: it does not claim success' (-not (Has $r 'Address list updated') -and -not (Has $r 'Nothing stays running'))
+
+# ---------- zapret: a binary deleted between the check and the start ----------
+$fakeZapret = Join-Path $testRoot 'zapret-nowinws'
+New-Item -ItemType Directory -Path $fakeZapret -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $fakeZapret 'general.bat') -Value '@echo off' -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $fakeZapret 'service.bat') -Value '@echo off' -Encoding ASCII
+$nowinws = New-Variant -Name 'nowinws' -Media 'dead' -AliveEmpty -Runner '@()' -FastWinwsWait -NoWinws
+$r = Invoke-Script $nowinws @('-ZapretDir', $fakeZapret, '-HostsFile', $hosts, '-IgnoreVpn', '-NoRestart')
+Check 'zapret: a vanished winws.exe is named as an antivirus problem' ($r.Exit -eq 2 -and (Has $r 'did not appear within 1 s') -and (Has $r 'The file itself is gone')) ("exit=$($r.Exit)")
 
 # ---------- result ----------
 Write-Host ''

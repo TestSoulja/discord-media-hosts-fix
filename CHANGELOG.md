@@ -17,6 +17,47 @@ always contains exactly the three working files:
 The workflow builds it with the same Windows PowerShell as the documented local
 command, so the released archive is byte-identical to a local rebuild.
 
+## [1.9.0] - 2026-11-24
+
+### Added
+
+- When nothing answers, the script now says **what exactly is blocked** instead
+  of one generic verdict. It probes ports `443`, `2053`, `2083`, `2087` and
+  `2096` on the same addresses and reports one of four things: only port 443 is
+  cut (a local redirect could still work), the addresses themselves are dropped
+  (only a tunnel helps), the TCP connection opens but the TLS handshake is
+  killed (blocked by name — no port and no address helps), or this machine
+  refuses the connection itself (a local firewall or antivirus, not the
+  provider).
+- The certificate issuer of a working HTTPS site is checked. When an antivirus
+  or proxy re-signs it with its own root, the script names that product, because
+  HTTPS inspection alone can break the media hosts. It reads nothing from the
+  antivirus: no logs, no settings, no exceptions — the certificate is proof
+  enough.
+- A rewritten `hosts` file is read back and verified. If a security product
+  restores the old file right after the write, the script says so and exits
+  with code 1 instead of reporting a success that did not happen. The same check
+  runs after `-Remove`.
+- A started config that never shows `winws.exe` now distinguishes the two
+  reasons: the file was deleted (antivirus) or the file exists but no process
+  starts (a block or a broken bundle).
+- Without `curl.exe` the script no longer pins a known-good list blind: it says
+  the addresses cannot be checked and leaves `hosts` unchanged with exit code 2.
+  `-Force` still pins the list, and now says that the result is unverified.
+- Tests: four verdict branches, the TLS interceptor hint, the unverified-write
+  path, the no-curl stop and its `-Force` override, the deleted `winws.exe`
+  message, and a static guard that the script never touches
+  `Add-MpPreference`/`Set-MpPreference`/`ExclusionPath`.
+
+### Changed
+
+- The `Details:` line in the "no address answered" report now says "TCP 443
+  does not connect" instead of "refused": the old wording claimed a refusal for
+  timeouts and resets too, which sent people to the wrong diagnosis.
+- The port check runs only in the failure path, is bounded to two addresses and
+  shortens the second one to a single port, so a dead network adds about half a
+  minute, not a minute.
+
 ## [1.8.1] - 2026-11-24
 
 ### Added
