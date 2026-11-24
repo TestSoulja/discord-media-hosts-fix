@@ -36,6 +36,12 @@ jobs:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: .\build-release.ps1 -Tag $env:RELEASE_TAG
 
+      # Nothing is published from a tag whose tests do not pass: this runs the
+      # same suite as CI, against the exact commit being released.
+      - name: Run the script test suite
+        shell: powershell
+        run: .\tests\fix-discord-media.tests.ps1
+
       - name: Publish the GitHub release
         shell: pwsh
         env:
