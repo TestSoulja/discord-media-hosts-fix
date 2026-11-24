@@ -16,7 +16,8 @@
        order. When TCP 443 does not connect to the CDN at all, another config
        cannot help and the switching is skipped;
     2. pins the addresses that actually answer for the Discord media CDN into
-       the Windows hosts file, inside a marked block, then restarts Discord.
+       the Windows hosts file, inside a marked block, and restarts Discord when
+       it has something new to pick up: rewritten addresses or a new bypass.
 
   Running the .bat is the whole interaction: elevation, config choice, the
   bypass restart and the Discord restart are automatic. If nothing works, the
@@ -38,9 +39,18 @@
   only if media still does not answer. Nothing is asked. The config that
   actually worked is remembered in %LOCALAPPDATA%\discord-media-hosts-fix\last-config.txt.
 
+  A running Discord keeps the addresses it resolved and its open connections
+  until the process restarts - closing it to the tray is not a restart. That is
+  why the client is restarted after a hosts rewrite or after the bypass was
+  started or replaced while Discord was already open, and why an untouched
+  client is reported instead of leaving the user guessing.
+
   Options:
       -Remove          delete the pin block and exit
       -NoRestart       do not restart the Discord client
+      -RestartDiscord  restart the Discord client even when nothing changed,
+                       and after -Remove
+                       (a closed client is not launched, only a running one)
       -DryRun          print the result, change nothing
       -Force           re-probe and re-pin even if everything already works
       -NoZapret        do not touch zapret, only pin hosts
@@ -65,7 +75,8 @@
   Versioning: Semantic Versioning (MAJOR.MINOR.PATCH). The version is defined
   once below in $AppVersion, the tag is v<version>, and every change is written
   down in CHANGELOG.md. When releasing: bump $AppVersion, add a CHANGELOG entry,
-  commit, tag v<version>, and attach the three files as discord-media-hosts-fix.zip.
+  commit, tag v<version> and push the tag - build-release.ps1 runs in CI, builds
+  discord-media-hosts-fix.zip and attaches it with SHA256SUMS to the release.
 
   License: MIT, Copyright (c) 2026 TestSoulja. See LICENSE in the repository.
 #>
@@ -73,6 +84,7 @@
 param(
     [switch]$Remove,
     [switch]$NoRestart,
+    [switch]$RestartDiscord,
     [switch]$DryRun,
     [switch]$Force,
     [switch]$NoZapret,
@@ -95,7 +107,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.7.1'
+$AppVersion = '1.8.0'
 
 $ErrorActionPreference = 'Stop'
 
@@ -596,8 +608,61 @@ function Start-Discord {
     return $started
 }
 
+# Discord clients that are running right now. A client "closed" to the tray is
+# still a process and still holds the addresses it resolved before, so it has to
+# be restarted, not just clicked away. Order is stable for readable messages.
+function Get-RunningDiscordClient {
+    $names = @('Discord', 'DiscordPTB', 'DiscordCanary', 'DiscordDevelopment')
+    return @($names | Where-Object { Get-Process -Name $_ -ErrorAction SilentlyContinue })
+}
+
+# Restarts the clients that are running right now. Never launches a closed one:
+# this project fixes hosts and the bypass, it is not a Discord launcher.
+function Restart-DiscordClient {
+    param([string]$Reason = 'requested')
+
+    $running = @(Get-RunningDiscordClient)
+    if ($running.Count -eq 0) {
+        Write-Step ''
+        Write-Step 'Discord is not running - just open it when you need it.' 'Gray'
+        return
+    }
+
+    Write-Step ''
+    switch ($Reason) {
+        'hosts' {
+            Write-Step ("Restarting so the new addresses are picked up: {0}" -f ($running -join ', ')) 'Gray'
+        }
+        'bypass' {
+            Write-Step ("The bypass was started or replaced - restarting Discord so it reconnects through it: {0}" -f ($running -join ', ')) 'Gray'
+        }
+        default {
+            Write-Step ("Restarting Discord as requested: {0}" -f ($running -join ', ')) 'Gray'
+        }
+    }
+
+    foreach ($name in $running) {
+        Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 1200
+
+    $started = Start-Discord -Names $running
+    if ($started -gt 0) {
+        Write-Step 'Discord started.' 'Green'
+    }
+    else {
+        Write-Step 'Could not find the Discord updater - open the client manually.' 'Yellow'
+    }
+}
+
 Write-Step ''
 Write-Step ("=== Discord media hosts fix v{0} (zapret + hosts) ===" -f $AppVersion) 'Cyan'
+
+if ($NoRestart -and $RestartDiscord) {
+    Write-Step 'Use either -NoRestart or -RestartDiscord, not both.' 'Red'
+    Write-Step 'Nothing was changed.' 'Yellow'
+    exit 1
+}
 
 # ---------- undo ----------
 if ($Remove) {
@@ -611,6 +676,10 @@ if ($Remove) {
         Write-Step ''
         Write-Step '--- resulting hosts (dry run, nothing written) ---' 'DarkGray'
         Write-Step $newText
+        if ($RestartDiscord) {
+            Write-Step ''
+            Write-Step 'Dry run: Discord would be restarted afterwards.' 'Yellow'
+        }
         return
     }
 
@@ -623,7 +692,12 @@ if ($Remove) {
         $backup = Save-HostsText -Path $HostsFile -Text $newText -Kind $current.Kind
         & ipconfig /flushdns | Out-Null
         Write-Step "Done. Backup: $backup" 'Green'
-        Write-Step 'Restart Discord for the change to take effect.' 'Gray'
+        if ($RestartDiscord) {
+            Restart-DiscordClient -Reason 'requested'
+        }
+        else {
+            Write-Step 'Restart Discord for the change to take effect.' 'Gray'
+        }
     }
     catch {
         Write-Step ''
@@ -891,6 +965,12 @@ if ($zapretConfig) {
     }
 }
 
+# A bypass that was started or replaced during this run, while a client may
+# already be open: that client's connections and resolved names predate it, so it
+# only routes through the new bypass after a restart. A failed sweep is not a
+# reason to touch the client - there is nothing to reconnect to.
+$bypassChanged = [bool]($lastStarted -and $bypassUp)
+
 # ---------- do the pinned addresses still work? ----------
 # The bypass is already up, so this is what Discord will actually see. It only
 # decides whether hosts has to be rewritten; the file is used to start the
@@ -1069,38 +1149,46 @@ else {
         Write-Step 'The pins are fine. Start zapret if it is not running yet.' 'Cyan'
     }
     Write-Step 'This file is not a Discord launcher: open Discord from its usual shortcut.' 'Cyan'
-    Write-Step 'If it still shows broken images, close it completely (tray icon too),' 'Yellow'
-    Write-Step 'open it again, or run this file with -Force.' 'Yellow'
-}
 
-# ---------- restart Discord (only after the hosts really changed) ----------
-if ($needFix -and -not ($NoRestart -or $DryRun)) {
-    $clientNames = @('Discord', 'DiscordPTB', 'DiscordCanary', 'DiscordDevelopment')
-    $running = @()
-    foreach ($name in $clientNames) {
-        if (Get-Process -Name $name -ErrorAction SilentlyContinue) { $running += $name }
-    }
-
-    if ($running.Count -eq 0) {
+    # The exact trap this branch can hide: everything is healthy, the client is
+    # open, and it still shows broken images because it keeps its old addresses
+    # and connections. Say that out loud instead of hoping for the README.
+    $running = @(Get-RunningDiscordClient)
+    $restartPlanned = $RestartDiscord -or $bypassChanged
+    if ($running.Count -gt 0) {
         Write-Step ''
-        Write-Step 'Discord is not running - just open it when you need it.' 'Gray'
-    }
-    else {
-        Write-Step ''
-        Write-Step ("Restarting so the new addresses are picked up: {0}" -f ($running -join ', ')) 'Gray'
-        foreach ($name in $running) {
-            Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        if ($NoRestart) {
+            Write-Step ("Discord is running ({0}) and keeps its old addresses until it is" -f ($running -join ', ')) 'Yellow'
+            Write-Step 'restarted. -NoRestart was passed, so it was left alone; close it' 'Yellow'
+            Write-Step 'completely (tray icon too) if images stay broken.' 'Yellow'
         }
-        Start-Sleep -Milliseconds 1200
-
-        $started = Start-Discord -Names $running
-        if ($started -gt 0) {
-            Write-Step 'Discord started.' 'Green'
+        elseif ($restartPlanned -and $DryRun) {
+            Write-Step ("Dry run: Discord is running ({0}) and would be restarted." -f ($running -join ', ')) 'Yellow'
+        }
+        elseif ($restartPlanned) {
+            Write-Step ("Discord is running ({0}) - it will be restarted so it picks this up." -f ($running -join ', ')) 'Yellow'
         }
         else {
-            Write-Step 'Could not find the Discord updater - open the client manually.' 'Yellow'
+            Write-Step ("Discord is running ({0}) - it keeps its old addresses until it is" -f ($running -join ', ')) 'Yellow'
+            Write-Step 'restarted. Close it completely (tray icon too) and open it again,' 'Yellow'
+            Write-Step 'or run this file with -RestartDiscord.' 'Yellow'
         }
     }
+    Write-Step 'To re-probe and re-pin anyway, run this file with -Force.' 'DarkGray'
+}
+
+# ---------- restart Discord (only when it has something new to pick up) ----------
+# A running client keeps its resolved addresses and open connections: neither a
+# rewritten hosts file nor a replaced bypass is picked up until the process
+# restarts. Closing to the tray is not a restart. So restart only for a reason,
+# and never launch a client that was not running.
+$restartReason = ''
+if ($RestartDiscord) { $restartReason = 'requested' }
+elseif ($needFix) { $restartReason = 'hosts' }
+elseif ($bypassChanged) { $restartReason = 'bypass' }
+
+if ($restartReason -and -not ($NoRestart -or $DryRun)) {
+    Restart-DiscordClient -Reason $restartReason
 }
 
 if ($DryRun) { return }

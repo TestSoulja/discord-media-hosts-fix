@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Build the release archive
+        shell: pwsh
+        run: .\build-release.ps1
+
+      - name: Run the script test suite
+        shell: pwsh
+        run: .\tests\fix-discord-media.tests.ps1

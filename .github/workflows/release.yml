@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish, for example v1.8.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Build the archive, checksum and notes
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: .\build-release.ps1 -Tag $env:RELEASE_TAG
+
+      - name: Publish the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          gh release view $env:RELEASE_TAG --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $env:RELEASE_TAG exists - refreshing notes and assets."
+            gh release edit $env:RELEASE_TAG --notes-file dist/release-notes.md
+            gh release upload $env:RELEASE_TAG dist/discord-media-hosts-fix.zip dist/SHA256SUMS --clobber
+          }
+          else {
+            Write-Host "Creating release $env:RELEASE_TAG."
+            gh release create $env:RELEASE_TAG dist/discord-media-hosts-fix.zip dist/SHA256SUMS --verify-tag --title $env:RELEASE_TAG --notes-file dist/release-notes.md
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh exited with code $LASTEXITCODE"
+          }

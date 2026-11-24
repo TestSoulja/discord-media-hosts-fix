@@ -4,3 +4,8 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# Release artifacts: built by build-release.ps1, never committed.
+dist/
+discord-media-hosts-fix.zip
+discord-media-fix.zip

@@ -15,6 +15,44 @@ archive `discord-media-hosts-fix.zip` (`discord-media-fix.zip` before 1.7.1)
 always contains exactly the three working files:
 `fix-discord-media.bat`, `fix-discord-media.ps1`, `remove-pins.bat`.
 
+## [1.8.0] - 2026-11-24
+
+### Added
+
+- `build-release.ps1` builds the release archive reproducibly (CRLF, fixed zip
+  timestamps) together with `SHA256SUMS` and release notes taken from this
+  changelog. It refuses a tag that does not match `$AppVersion`, and stops on a
+  PowerShell syntax error or a stale README/CHANGELOG version.
+- `.github/workflows/release.yml` publishes a pushed `v*` tag: it builds from
+  the tagged commit with that script and attaches the archive and `SHA256SUMS`
+  to the GitHub release, so a release cannot be published without its files.
+- `tests/fix-discord-media.tests.ps1` — a test suite that drives the real script
+  against temporary `hosts` files with the network, the Discord client and admin
+  rights stubbed out: 48 checks over the pins-fine branch, restart reasons,
+  `-Remove`, VPN stop, BOM and read-only `hosts`, idempotency, backups and dry
+  runs. `.github/workflows/ci.yml` runs it with a build on every push to `main`
+  and on pull requests.
+- **`-RestartDiscord`** — restart the Discord client even when nothing changed.
+  Useful when a client has been open for a long time and keeps stale CDN
+  connections; a client that is not running is still never launched. It also
+  restarts after `-Remove`, where before the flag was silently ignored.
+- The client is now also restarted when the bypass was started or replaced
+  during the run while Discord was already open. Before, that happened only
+  after `hosts` was rewritten, so the config sweep could leave an open client
+  on connections that predate the new bypass.
+
+### Changed
+
+- Release artifacts are no longer left as untracked files: `dist/` and the
+  archive names are listed in `.gitignore`. The archive is built, never
+  committed.
+- The "pins are fine, hosts left as is" path now says out loud when Discord is
+  running and will keep its old addresses until restarted, instead of a generic
+  hint at the end. It names the running client and suggests `-RestartDiscord`
+  (or a full close, including the tray icon).
+- `-NoRestart` and `-RestartDiscord` together are rejected before anything is
+  changed, with exit code `1`.
+
 ## [1.7.1] - 2026-11-23
 
 ### Changed
