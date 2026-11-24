@@ -123,7 +123,7 @@ The only thing that works is a **different destination address** that serves the
 8. Writes them into `hosts`, once per hostname — 12 lines in a marked block.
 9. Flushes the DNS cache. Restarts the Discord client that was running (Stable / PTB / Canary / Development) when `hosts` changed or the bypass was started/replaced; a client that was not running is never launched. `-RestartDiscord` forces the restart, `-NoRestart` turns it off.
 
-If no address answers, nothing is written and the script exits with code `2` — after naming the real cause: by name (Discord works, only the media hosts are cut), by config (even `discord.com` fails through the bypass) or by address (TCP 443 never connects). It never pins a dead address, and it never edits zapret's configs, lists or `service.bat`. A zapret installed as a Windows service is never killed and replaced.
+If no address answers, nothing is written and the script exits with code `2` — after naming the real cause: by name (Discord works, only the media hosts are cut), by config (even `discord.com` fails through the bypass) or by address (TCP 443 never connects). When nothing connects at all, it also checks whether only port 443 is cut, the addresses themselves are dropped, the TLS handshake is killed, or the machine itself refuses — four different situations with four different answers. Every `hosts` write is read back and verified: if a security product restores the old file, the script says so and exits with code `1` instead of reporting success. It never pins a dead address, and it never edits zapret's configs, lists or `service.bat`. A zapret installed as a Windows service is never killed and replaced.
 
 ## Requirements
 
@@ -146,7 +146,7 @@ Options (pass them through the `.bat` or call the `.ps1` from an elevated PowerS
 | Option | Meaning |
 |---|---|
 | `-Remove` | delete the pin block and exit |
-| `-Force` | re-probe and re-pin even if everything already works |
+| `-Force` | re-probe and re-pin even if everything already works; when `curl.exe` is missing it also pins the known-good list, and says the result is unverified |
 | `-DryRun` | print the resulting `hosts`, change nothing |
 | `-NoRestart` | do not touch the Discord client |
 | `-RestartDiscord` | restart the Discord client even when nothing changed, and after `-Remove` (a closed client is not launched) |
@@ -422,6 +422,8 @@ fix-discord-media.bat -RestartDiscord                     :: перезапус�
 fix-discord-media.bat -Remove -RestartDiscord             :: снять пиннинг и перезапустить Discord
 fix-discord-media.bat -IgnoreVpn                          :: запустить даже при активном VPN
 ```
+
+`-Force` — перепроверить и перепрописать, даже если всё уже работает. Если `curl.exe` в системе нет, только с `-Force` скрипт пропишет известный список — и прямо предупредит, что проверить его не смог.
 
 ### Выбор конфига
 
