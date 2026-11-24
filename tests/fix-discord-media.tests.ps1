@@ -166,9 +166,29 @@ foreach ($flag in @('-RestartDiscord', '-NoRestart', '-DryRun', '-Force')) {
     Check ("static: synopsis mentions {0}" -f $flag) ([IO.File]::ReadAllText($srcPath).Contains($flag))
 }
 
+# The fix must stay a one-shot run: no service, task, autostart or watcher.
+$shipped = @('fix-discord-media.bat', 'fix-discord-media.ps1', 'remove-pins.bat')
+$persistence = @(
+    'schtasks', 'Register-ScheduledTask', 'CurrentVersion\Run', 'Startup',
+    'New-Service', 'Start-Job', 'Register-ObjectEvent', 'Start-ThreadJob',
+    'WScript.Shell'
+)
+foreach ($word in $persistence) {
+    $found = @($shipped | Where-Object {
+        [IO.File]::ReadAllText((Join-Path $root $_)).Contains($word)
+    })
+    Check ("static: no '{0}' in the shipped files" -f $word) ($found.Count -eq 0) ($found -join ', ')
+}
+
 # ---------- version / conflict ----------
+$appVersion = [regex]::Match($src, '(?m)^\$AppVersion = ''([0-9]+\.[0-9]+\.[0-9]+)''').Groups[1].Value
+Check 'static: AppVersion is a semver' ($appVersion -match '^\d+\.\d+\.\d+$') $appVersion
+Check 'static: README names the version' ($readme.Contains("**Version $appVersion**")) $appVersion
+$changelog = [IO.File]::ReadAllText((Join-Path $root 'CHANGELOG.md'), [Text.Encoding]::UTF8)
+Check 'static: CHANGELOG has this version' ($changelog.Contains("## [$appVersion]")) $appVersion
+
 $r = Invoke-Script $srcPath @('-Version')
-Check 'version: exit 0 and prints 1.8.0' ($r.Exit -eq 0 -and (Has $r '1.8.0')) ($r.Lines -join ' | ')
+Check 'version: exit 0 and prints the AppVersion' ($r.Exit -eq 0 -and (Has $r $appVersion)) ($r.Lines -join ' | ')
 
 New-HostsFile $hosts $plainHosts
 $before = File-Hash $hosts
@@ -209,6 +229,7 @@ New-HostsFile $hosts $plainHosts
 $beforeBackups = @(Get-ChildItem -Path ("{0}.bak-*" -f $hosts) -ErrorAction SilentlyContinue).Count
 $r = Invoke-Script $write @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
 Check 'write: reports the update and no dead pins' ($r.Exit -eq 0 -and (Has $r 'Address list updated') -and (Has $r 'no dead address was pinned') -eq $false) ("exit=$($r.Exit)")
+Check 'write: says nothing stays running afterwards' (Has $r 'Nothing stays running in the background')
 Check 'write: one marked block' ((Count-Lines $hosts '\# >>> discord-media-pin') -eq 1 -and (Count-Lines $hosts '\# <<< discord-media-pin') -eq 1)
 Check 'write: 12 address lines (4 IPs x 3 hosts)' ((Count-Lines $hosts '^\d{1,3}(\.\d{1,3}){3} (media|images-ext)') -eq 12)
 foreach ($name in @('media.discordapp.net', 'images-ext-1.discordapp.net', 'images-ext-2.discordapp.net')) {

@@ -24,6 +24,9 @@
   script says WHY (blocked by name or the addresses themselves are dropped)
   and leaves hosts unchanged instead of pinning dead addresses.
 
+  It is a one-shot fix: no service, no scheduled task, no autostart, nothing
+  left running after it returns. Run it again only when you choose to.
+
   It works with any zapret bundle layout (winws.exe in bin\ or in the root).
   It only uses the folder it lives in - copy the three files into the zapret
   bundle, or pass -ZapretDir - and never edits the zapret config itself.
@@ -107,7 +110,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.8.0'
+$AppVersion = '1.8.1'
 
 $ErrorActionPreference = 'Stop'
 
@@ -1212,3 +1215,4 @@ Write-Step 'it picks a working config by itself and re-pins if the addresses rot
 Write-Step 'That start is a little slower (10-60 s) - the check runs every time.' 'DarkGray'
 Write-Step 'A VPN must be off for Discord: this fix needs a direct connection with zapret.' 'Yellow'
 Write-Step 'Undo any time: remove-pins.bat' 'DarkGray'
+Write-Step 'Nothing stays running in the background: no service, no scheduled task, no autostart.' 'DarkGray'

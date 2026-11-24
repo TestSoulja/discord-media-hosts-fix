@@ -6,7 +6,7 @@ The script checks that no VPN is carrying the traffic, starts your zapret config
 
 > **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
 
-**Version 1.8.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
+**Version 1.8.1** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -228,7 +228,10 @@ Safety details:
 - re-running is idempotent: an old block is replaced, other entries are untouched;
 - no changes to DNS settings, firewall, proxy, routing or the registry;
 - zapret itself is not modified — the script only starts the config you already have;
-- other sites, LAN names and `cdn.discordapp.com` are not affected.
+- other sites, LAN names and `cdn.discordapp.com` are not affected;
+- it is a one-shot run: **no service, no scheduled task, no autostart entry, no background process**. When the script exits, nothing of it keeps running, so it cannot reset, restart or re-pin anything on its own later;
+- the Discord client is restarted at most once per run, and only if it was already open: the script never launches a closed client and never touches it again afterwards;
+- nothing else is written: just `hosts` (plus its backups) and `%LOCALAPPDATA%\discord-media-hosts-fix\last-config.txt`, which is only read on the next manual run.
 
 ## Limitations
 
@@ -272,7 +275,7 @@ This is a versioned project, not a loose set of scripts.
 - Release checklist: bump `$AppVersion` → update the version line in README → add a CHANGELOG entry → commit → tag `v<version>` → push the tag.
 - Manual fallback: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<version>`, then upload `dist/discord-media-hosts-fix.zip` and `dist/SHA256SUMS` to the release.
 
-The current release is **v1.8.0**.
+The current release is **v1.8.1**.
 
 ## License
 
@@ -451,7 +454,15 @@ This one works - keeping it.
 # <<< discord-media-pin (auto) <<<
 ```
 
-Перед каждой записью делается `hosts.bak-дата-время` (хранятся 5 последних), атрибут «только чтение» и кодировка файла сохраняются, повторный запуск заменяет блок, а не дублирует. DNS, фаервол, прокси, маршруты и реестр не трогаются, конфиги zapret и `service.bat` не изменяются; остальные сайты и `cdn.discordapp.com` не затрагиваются.
+Перед каждой записью делается `hosts.bak-дата-время` (хранятся 5 последних), атрибут «только чтение» и кодировка файла сохраняются, повторный запуск заменяет блок, а не дублирует.
+
+Что скрипт **не** делает:
+
+- не ставит службу, задачу в планировщике, автозапуск или фоновый процесс — после выхода из скрипта от него ничего не остаётся в памяти и в системе, поэтому сам по себе он никогда не перезапустит Discord, не перепишет адреса и не «сбросит» настройку;
+- не трогает DNS, фаервол, прокси, маршруты и реестр, не меняет конфиги zapret и `service.bat`;
+- не затрагивает другие сайты, имена в локальной сети и `cdn.discordapp.com`;
+- не запускает Discord, если он был закрыт: клиент перезапускается не более одного раза за прогон и только если уже работал;
+- не пишет ничего, кроме `hosts` (и его бэкапов) и `%LOCALAPPDATA%\discord-media-hosts-fix\last-config.txt`; последний читается только при следующем ручном запуске.
 
 ### Ограничения
 
@@ -487,4 +498,4 @@ This one works - keeping it.
 - Порядок выпуска: поднять `$AppVersion` → обновить строку версии в README → добавить запись в CHANGELOG → коммит → тег `v<версия>` → пуш тега.
 - Запасной путь: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<версия>`, затем загрузить `dist/discord-media-hosts-fix.zip` и `dist/SHA256SUMS` в релиз.
 
-Текущий релиз — **v1.8.0**.
+Текущий релиз — **v1.8.1**.

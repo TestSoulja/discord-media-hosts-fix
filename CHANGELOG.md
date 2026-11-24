@@ -17,6 +17,27 @@ always contains exactly the three working files:
 The workflow builds it with the same Windows PowerShell as the documented local
 command, so the released archive is byte-identical to a local rebuild.
 
+## [1.8.1] - 2026-11-24
+
+### Added
+
+- The closing output now states that nothing stays running: no service, no
+  scheduled task, no autostart. The script is a one-shot run, and after it
+  returns nothing of it remains in memory or on the startup path.
+- The synopsis and the README say the same up front, next to what the run
+  changes on the machine.
+- The test suite now fails if a persistence mechanism (`schtasks`,
+  `Register-ScheduledTask`, `CurrentVersion\Run`, `Startup`, `New-Service`,
+  background jobs, `WScript.Shell`) appears in any shipped file, so this
+  guarantee cannot be lost silently later.
+- The test suite also checks the closing note and derives the expected version
+  from `$AppVersion`, then asserts that README and CHANGELOG name that version.
+
+### Changed
+
+- No behavior change: the same fixes, options and files. Only the reassurance
+  and the tests around it are new.
+
 ## [1.8.0] - 2026-11-24
 
 ### Added
