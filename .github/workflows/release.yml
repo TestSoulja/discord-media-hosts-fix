@@ -40,7 +40,16 @@ jobs:
       # same suite as CI, against the exact commit being released.
       - name: Run the script test suite
         shell: powershell
-        run: .\tests\fix-discord-media.tests.ps1
+        run: |
+          $log = & powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\fix-discord-media.tests.ps1 2>&1 |
+              ForEach-Object { $_.ToString() }
+          $code = $LASTEXITCODE
+          $log | Write-Host
+          if ($code -ne 0 -and $env:GITHUB_STEP_SUMMARY) {
+              $body = "### The test suite failed" + "`n`n" + '```' + "`n" + ($log -join "`n") + "`n" + '```' + "`n"
+              [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $body, (New-Object Text.UTF8Encoding($false)))
+          }
+          exit $code
 
       - name: Publish the GitHub release
         shell: pwsh

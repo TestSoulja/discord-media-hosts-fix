@@ -25,4 +25,15 @@ jobs:
 
       - name: Run the script test suite
         shell: powershell
-        run: .\tests\fix-discord-media.tests.ps1
+        run: |
+          $log = & powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\fix-discord-media.tests.ps1 2>&1 |
+              ForEach-Object { $_.ToString() }
+          $code = $LASTEXITCODE
+          $log | Write-Host
+          # The log of a private repository is not readable without a token, so a
+          # red run puts its own output where anyone can see which check failed.
+          if ($code -ne 0 -and $env:GITHUB_STEP_SUMMARY) {
+              $body = "### The test suite failed" + "`n`n" + '```' + "`n" + ($log -join "`n") + "`n" + '```' + "`n"
+              [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $body, (New-Object Text.UTF8Encoding($false)))
+          }
+          exit $code
