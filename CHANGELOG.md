@@ -17,6 +17,26 @@ always contains exactly the three working files:
 The workflow builds it with the same Windows PowerShell as the documented local
 command, so the released archive is byte-identical to a local rebuild.
 
+## [1.9.1] - 2026-11-25
+
+### Added
+
+- When a VPN carries the default route, the `.bat` now asks which way to go
+  instead of only stopping: the classic run, or continuing with the VPN on.
+  `-IgnoreVpn` answers the same question from a script or a shortcut, and
+  `-NoPrompt` removes it. Nothing is asked when no tunnel carries the traffic.
+
+### Changed
+
+- The stop message no longer advertises `-IgnoreVpn` as a way to "try anyway".
+  That hint was the reason people forced a run that could not work: inside a
+  tunnel the pinned addresses are unreachable and zapret does not work either.
+  The message now states the three honest options instead.
+- A run that continues with the VPN on says what it measured: every probe went
+  through the tunnel, so the report no longer blames the provider. When nothing
+  answers in that mode, it says the tunnel is in the way (and that pins cannot
+  work inside a tunnel), instead of one of the four provider verdicts.
+
 ## [1.9.0] - 2026-11-24
 
 ### Added

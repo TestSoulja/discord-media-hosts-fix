@@ -6,7 +6,7 @@ The script checks that no VPN is carrying the traffic, starts your zapret config
 
 > **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
 
-**Version 1.9.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
+**Version 1.9.1** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -113,7 +113,7 @@ The only thing that works is a **different destination address** that serves the
 
 ## What the script does
 
-1. Refuses to run while a VPN or TUN tunnel carries the default route (exit code `3`): pinned addresses are not reachable through a tunnel, so nothing would be fixed.
+1. Refuses to run while a VPN or TUN tunnel carries the default route (exit code `3`): pinned addresses are not reachable through a tunnel, so nothing would be fixed. Started from the `.bat`, it instead offers a choice — stop and keep the VPN off, or continue with the VPN on (see [When continuing with the VPN on is safe](#when-continuing-with-the-vpn-on-is-safe)).
 2. Reads the configs (`general.bat`, `general (ALT11).bat`, …) from the folder it lives in.
 3. Starts the remembered config (or `general.bat`), waits for `winws.exe`, then waits a few seconds so WinDivert really attaches before the first probe.
 4. Checks four seed addresses of `media.discordapp.net` through the bypass. If they answer, that config stays.
@@ -151,14 +151,14 @@ Options (pass them through the `.bat` or call the `.ps1` from an elevated PowerS
 | `-NoRestart` | do not touch the Discord client |
 | `-RestartDiscord` | restart the Discord client even when nothing changed, and after `-Remove` (a closed client is not launched) |
 | `-NoZapret` | do not look for or start zapret, only pin hosts |
-| `-IgnoreVpn` | continue even when a VPN carries the default route |
+| `-IgnoreVpn` | same as answering 2 to the VPN question: continue even when a VPN carries the default route (the run then says everything was measured through the tunnel) |
 | `-ZapretDir <path>` | zapret folder (default: the folder this script is in) |
 | `-Config <name>` | use only this config, no automatic switching, for example `"general (ALT11).bat"` |
 | `-MaxConfigs <n>` | stop the automatic sweep after `n` configs (default: all of them) |
 | `-RestartZapret` | restart the bypass even if it already answers |
 | `-ShowConfigs` | list configs found in the zapret folder and exit |
 | `-Prompt` | show the config menu instead of choosing automatically |
-| `-NoPrompt` | never ask (automatic is already the default) |
+| `-NoPrompt` | never ask anything: no config menu, no VPN question |
 | `-HostsFile <path>` | alternate `hosts` file (for testing) |
 | `-Hosts <name...>` | hostnames to pin (default: the three Discord media hosts) |
 | `-ExtraIPs <ip...>` | additional candidate addresses to probe first |
@@ -176,6 +176,21 @@ fix-discord-media.bat -Config "general (ALT11).bat"
 :: pin only, without touching zapret
 fix-discord-media.bat -NoZapret
 ```
+
+### When continuing with the VPN on is safe
+
+If a tunnel carries the default route, the script stops and — when started from the `.bat` — asks which way to go:
+
+```
+  1  Classic - stop here, turn the VPN off and run again   (default)
+  2  With the VPN on - only if Discord bypasses this tunnel
+```
+
+Option 2 is harmless **only when the tunnel does not carry the traffic these hosts are reached through**: a split tunneling setup where Discord is excluded from the tunnel, or a VPN client that is up while the default route still goes through the physical adapter. In that case the stop was a false alarm and continuing changes nothing about the result.
+
+If the tunnel carries everything, option 2 cannot fix the media: pinned addresses are unreachable inside a tunnel and zapret does not work there either. It cannot break anything either — when no address answers, `hosts` is left untouched and the script exits with code `2` — but it will not help. Such a run says in its own words that everything was measured through the tunnel and does not pretend to know what your provider blocks.
+
+`-IgnoreVpn` does the same as option 2 for scripts and shortcuts; `-NoPrompt` removes the question.
 
 ## Choosing the config
 
@@ -237,7 +252,7 @@ Safety details:
 ## Limitations
 
 - The addresses are Cloudflare anycast IPs and can rotate. If media breaks again months later, run the script again — it re-probes.
-- **Does not work with a VPN or TUN tunnel enabled.** The pinned addresses are reached directly through your ISP; inside a tunnel they are not available, and zapret itself also does not work through a VPN. The script checks this itself: if the default route goes through a tunnel it stops with exit code `3` and writes nothing. A tunnel that is up but does not carry the default route (split tunneling) is fine and only gets a note. `-IgnoreVpn` forces a run.
+- **Does not work with a VPN or TUN tunnel enabled.** The pinned addresses are reached directly through your ISP; inside a tunnel they are not available, and zapret itself also does not work through a VPN. The script checks this itself: if the default route goes through a tunnel it stops with exit code `3` and writes nothing, or asks whether to continue (see [When continuing with the VPN on is safe](#when-continuing-with-the-vpn-on-is-safe)). A tunnel that is up but does not carry the default route (split tunneling) is fine and only gets a note.
 - If the block covers every address in the range, no `hosts` entry can help: this method is done, use a tunnel or a proxy for Discord instead.
 - If the block is by name (not by address), the pins are not the cure either — another zapret config or a tunnel is. The script tells these two cases apart and says which one you hit.
 - If only port 443 is cut (Cloudflare also answers on 2053, 2083, 2087 and 2096), a local redirect `127.0.0.1:443 -> <address>:2053` can carry the images — but that is a background tool, not this one-shot fix. The script says when this is your case.
@@ -248,7 +263,7 @@ Safety details:
 
 **"All Discord media hosts answer — the pins are fine, hosts left as is"** — the script checked all three hosts through the running bypass and each one responded, so it left `hosts` alone on purpose. That is the normal state on the second and later runs. If Discord still shows broken images, close it completely (tray icon too) and open it again: a running client keeps its old addresses until restart. To re-probe and re-pin anyway, run with `-Force`. With a VPN on, this check can also pass while Discord still fails. If the client is open, the script now says so by name and suggests `-RestartDiscord`, which restarts it for you.
 
-**"VPN is on: … Nothing was changed." (exit code `3`)** — the VPN carries all traffic, so the fixed addresses are unreachable. Turn the VPN off and run the file again, send only Discord through the tunnel (split tunneling), or pass `-IgnoreVpn` if you know the tunnel does not carry Discord traffic.
+**"VPN is on: … Nothing was changed." (exit code `3`)** — the VPN carries all traffic, so the fixed addresses are unreachable. Started from the `.bat`, the script offers a choice instead of only stopping: classic (turn the VPN off and run again) or continue with the VPN on. Choose the second one only if you know the tunnel does not carry Discord traffic — see [When continuing with the VPN on is safe](#when-continuing-with-the-vpn-on-is-safe). `-IgnoreVpn` answers that question from the command line.
 
 **"No address answered"** — followed by one of these explanations:
 
@@ -288,7 +303,7 @@ This is a versioned project, not a loose set of scripts.
 - Release checklist: bump `$AppVersion` → update the version line in README → add a CHANGELOG entry → commit → tag `v<version>` → push the tag.
 - Manual fallback: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<version>`, then upload `dist/discord-media-hosts-fix.zip` and `dist/SHA256SUMS` to the release.
 
-The current release is **v1.9.0**.
+The current release is **v1.9.1**.
 
 ## License
 
@@ -335,12 +350,12 @@ D:\zapret\
 **3. Запуск:** двойной клик по `fix-discord-media.bat`.
 
 1. Windows спросит права администратора — **Да**.
-2. Подождите 10–60 секунд: скрипт запустит zapret, проверит медиа-CDN и сам переключится на другой конфиг, если через первый ничего не проходит. Вопросов не задаёт.
+2. Подождите 10–60 секунд: скрипт запустит zapret, проверит медиа-CDN и сам переключится на другой конфиг, если через первый ничего не проходит. Вопросов не задаёт — единственное исключение: выбор при включённом VPN (см. ниже).
 3. Discord перезапустится сам, если пины изменились или обход был запущен/сменён при уже открытом клиенте. Картинки загрузятся.
 
 **Это и была одноразовая часть.** Закреплённые адреса остаются в `hosts` после перезагрузок. Дальше запускайте zapret как раньше — `general.bat`, `service.bat` или ярлыком — и открывайте Discord как обычно. Этот файл нужен снова только если картинки опять отвалились: он заново проверит адреса и перепишет блок. Свёрнутое окно zapret не закрывайте: закрыли — обход выключился.
 
-Если включён VPN, скрипт остановится до любых изменений и объяснит почему: через туннель закреплённые адреса недоступны. Выключите VPN или исключите `*.discordapp.net` из туннеля.
+Если включён VPN, скрипт остановится до любых изменений и объяснит почему: через туннель закреплённые адреса недоступны. При запуске через `.bat` он предложит выбор — классический запуск (VPN выключить) или продолжение с VPN; второй вариант безвреден только если Discord идёт мимо туннеля. Подробнее — [Когда продолжать с включённым VPN точно не помешает](#когда-продолжать-с-включённым-vpn-точно-не-помешает).
 
 ### Каждый день — этот файл не запускает Discord
 
@@ -420,10 +435,25 @@ fix-discord-media.bat -NoZapret                           :: только пин
 fix-discord-media.bat -Force -NoRestart                   :: прописать и не перезапускать Discord
 fix-discord-media.bat -RestartDiscord                     :: перезапустить Discord, даже если ничего не менялось
 fix-discord-media.bat -Remove -RestartDiscord             :: снять пиннинг и перезапустить Discord
-fix-discord-media.bat -IgnoreVpn                          :: запустить даже при активном VPN
+fix-discord-media.bat -IgnoreVpn                          :: ответить «2» на вопрос про VPN из командной строки
 ```
 
 `-Force` — перепроверить и перепрописать, даже если всё уже работает. Если `curl.exe` в системе нет, только с `-Force` скрипт пропишет известный список — и прямо предупредит, что проверить его не смог.
+
+### Когда продолжать с включённым VPN точно не помешает
+
+Если туннель несёт маршрут по умолчанию, скрипт останавливается и (при запуске через `.bat`) спрашивает, как поступить:
+
+```
+  1  Classic - stop here, turn the VPN off and run again   (default)
+  2  With the VPN on - only if Discord bypasses this tunnel
+```
+
+Вариант 2 безвреден **только если туннель не несёт трафик к этим хостам**: split tunneling, где Discord исключён из туннеля, или VPN-клиент поднят, а маршрут по умолчанию всё равно идёт через физический адаптер. В этом случае остановка была ложной тревогой, и выбор ничего не меняет в результате.
+
+Если туннель несёт всё, вариант 2 медиа не починит: закреплённые адреса внутри туннеля недоступны, и zapret там тоже не работает. Сломать он тоже ничего не может — если ни один адрес не ответил, `hosts` остаётся нетронутым и скрипт выходит с кодом `2` — но и помочь не поможет. Такой прогон прямо пишет, что всё измерено через туннель, и не делает вид, что знает, что блокирует провайдер.
+
+`-IgnoreVpn` делает то же, что вариант 2, для скриптов и ярлыков; `-NoPrompt` убирает вопрос совсем.
 
 ### Выбор конфига
 
@@ -482,7 +512,7 @@ This one works - keeping it.
 ### Ограничения
 
 - Адреса Cloudflare могут меняться — просто запустите файл ещё раз, он всё перепроверит.
-- **Не работает при включённом VPN/TUN.** Адреса закреплены для прямого подключения через провайдера; внутри туннеля они недоступны, да и zapret с VPN не работает. Скрипт проверяет это сам: если default route идёт в туннель — выходит с кодом `3` и ничего не пишет. Туннель, который просто поднят, но трафик через него не идёт (split tunneling), не мешает — будет только пометка в консоли. `-IgnoreVpn` запускает вопреки проверке.
+- **Не работает при включённом VPN/TUN.** Адреса закреплены для прямого подключения через провайдера; внутри туннеля они недоступны, да и zapret с VPN не работает. Скрипт проверяет это сам: если default route идёт в туннель — выходит с кодом `3` и ничего не пишет, либо (при запуске через `.bat`) предлагает выбор: классический запуск или продолжение с VPN. Второй вариант безвреден только если туннель не несёт трафик к этим хостам — [Когда продолжать с включённым VPN точно не помешает](#когда-продолжать-с-включённым-vpn-точно-не-помешает). Туннель, который просто поднят, но трафик через него не идёт (split tunneling), не мешает — будет только пометка в консоли.
 - Если сеть режет весь диапазон, `hosts` не спасёт: нужен туннель или прокси для Discord.
 - Если блок по имени, а не по адресу, пины тоже не лекарство: нужен другой конфиг zapret или туннель. Скрипт различает эти случаи и говорит, какой именно у вас.
 - Если режут только порт 443 (Cloudflare отвечает ещё на 2053, 2083, 2087 и 2096), помочь может локальный редирект `127.0.0.1:443 -> <адрес>:2053` — но это фоновый инструмент, а не этот одноразовый фикс. Скрипт прямо говорит, когда у вас именно такой случай.
@@ -491,7 +521,7 @@ This one works - keeping it.
 
 ### Если не сработало
 
-- **«VPN is on: … Nothing was changed.» (код выхода `3`)** — VPN несёт весь трафик, закреплённые адреса недоступны. Выключите VPN и запустите снова, заворачивайте в туннель только Discord (split tunneling), либо добавьте `-IgnoreVpn`, если точно знаете, что Discord в туннель не попадает.
+- **«VPN is on: … Nothing was changed.» (код выхода `3`)** — VPN несёт весь трафик, закреплённые адреса недоступны. При запуске через `.bat` скрипт не просто останавливается, а предлагает выбор: классический запуск (выключить VPN и запустить снова) или продолжить с включённым VPN. Второй вариант выбирайте только если точно знаете, что Discord в туннель не попадает — см. [Когда продолжать с включённым VPN точно не помешает](#когда-продолжать-с-включённым-vpn-точно-не-помешает). `-IgnoreVpn` отвечает на этот вопрос из командной строки.
 - **«No address answered»** — дальше одно из объяснений:
   - *«discord.com fails too»* — обход вообще не берёт этот DPI, поэтому и медиа-хосты падают по той же причине. Все конфиги в папке скрипт уже перебрал; дальше — свежая сборка zapret (затем запустите файл снова, он переберёт всё заново) либо туннель/прокси для Discord.
   - *«every connection to media.discordapp.net is cut off»* — сам Discord через обход грузится, режут только медиа-хосты по имени. Сменой адресов это тоже не лечится: те же шаги — свежая сборка zapret, затем туннель/прокси.
@@ -521,4 +551,4 @@ This one works - keeping it.
 - Порядок выпуска: поднять `$AppVersion` → обновить строку версии в README → добавить запись в CHANGELOG → коммит → тег `v<версия>` → пуш тега.
 - Запасной путь: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<версия>`, затем загрузить `dist/discord-media-hosts-fix.zip` и `dist/SHA256SUMS` в релиз.
 
-Текущий релиз — **v1.9.0**.
+Текущий релиз — **v1.9.1**.

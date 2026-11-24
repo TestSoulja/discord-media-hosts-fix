@@ -169,9 +169,16 @@ function Start-Process { param([string]`$FilePath, [string]`$WorkingDirectory, `
 }
 
 function Invoke-Script {
-    param([string]$Path, [string[]]$Arguments)
-    $lines = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $Path @Arguments 2>&1 |
-        ForEach-Object { $_.ToString() })
+    param([string]$Path, [string[]]$Arguments, [switch]$Feed, [string]$InputText = '')
+    if ($Feed) {
+        # Answering a prompt: the child must get the text on stdin.
+        $lines = @($InputText | & powershell -NoProfile -ExecutionPolicy Bypass -File $Path @Arguments 2>&1 |
+            ForEach-Object { $_.ToString() })
+    }
+    else {
+        $lines = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $Path @Arguments 2>&1 |
+            ForEach-Object { $_.ToString() })
+    }
     $exit = $LASTEXITCODE
     return @{ Exit = $exit; Lines = $lines }
 }
@@ -234,6 +241,11 @@ foreach ($word in $persistence) {
 foreach ($word in @('Add-MpPreference', 'Set-MpPreference', 'ExclusionPath')) {
     Check ("static: never changes antivirus settings ('{0}')" -f $word) (-not $src.Contains($word))
 }
+
+# The failure message must never offer its own bypass again: that is exactly how
+# people ended up forcing a run that could not work.
+Check 'static: the VPN stop is a choice, not a hidden flag hint' (-not $src.Contains('add -IgnoreVpn'))
+Check 'static: the VPN menu exists' ($src.Contains('Classic - stop here') -and $src.Contains('With the VPN on'))
 
 # ---------- version / conflict ----------
 $appVersion = [regex]::Match($src, '(?m)^\$AppVersion = ''([0-9]+\.[0-9]+\.[0-9]+)''').Groups[1].Value
@@ -373,11 +385,53 @@ Check 'remove + -RestartDiscord + dry run: says it would, changes nothing' ($r.E
 $vpn = New-Variant -Name 'vpn' -SystemFile -Media 'ok' -VpnStub
 New-HostsFile $hosts $plainHosts
 $before = File-Hash $hosts
-$r = Invoke-Script $vpn @('-NoZapret', '-HostsFile', $hosts)
+$r = Invoke-Script $vpn -Arguments @('-NoZapret', '-HostsFile', $hosts)
 Check 'vpn: exit 3, nothing changed' ($r.Exit -eq 3 -and (Has $r 'VPN is on') -and (File-Hash $hosts) -eq $before) ("exit=$($r.Exit)")
+Check 'vpn: the stop does not advertise the bypass flag' (-not (Has $r '-IgnoreVpn'))
 
-$r = Invoke-Script $vpn @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
-Check 'vpn: -IgnoreVpn continues' ($r.Exit -eq 0 -and (Has $r 'continuing because -IgnoreVpn')) ("exit=$($r.Exit)")
+$r = Invoke-Script $vpn -Arguments @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'vpn: -IgnoreVpn continues and says what it measured' ($r.Exit -eq 0 -and (Has $r 'Continuing with the VPN on') -and (Has $r 'goes through that tunnel')) ("exit=$($r.Exit)")
+
+# The choice is only offered by the real entry point (.bat sets the variable),
+# and only when a tunnel actually carries the default route.
+$env:DISCORD_MEDIA_FIX_MENU = '1'
+try {
+    New-HostsFile $hosts $plainHosts
+    $before = File-Hash $hosts
+    $r = Invoke-Script $vpn -Arguments @('-NoZapret', '-HostsFile', $hosts) -Feed -InputText ''
+    Check 'vpn menu: Enter picks the classic run' ($r.Exit -eq 3 -and (Has $r 'Classic - stop here') -and (Has $r 'With the VPN on') -and (File-Hash $hosts) -eq $before) ("exit=$($r.Exit)")
+
+    $vpnWrite = New-Variant -Name 'vpn-write' -Media 'dead' -AliveStub -Runner '@()' -VpnStub
+    $r = Invoke-Script $vpnWrite -Arguments @('-NoZapret', '-HostsFile', $hosts) -Feed -InputText '2'
+    Check 'vpn menu: 2 continues with the VPN on' ($r.Exit -eq 0 -and (Has $r 'Continuing with the VPN on') -and (Count-Lines $hosts '^162\.159\.') -eq 12) ("exit=$($r.Exit)")
+
+    $r = Invoke-Script $vpnWrite -Arguments @('-NoZapret', '-HostsFile', $hosts) -Feed -InputText "x`r`n2"
+    Check 'vpn menu: a wrong answer asks again' ($r.Exit -eq 0 -and (Has $r 'Type 1 or 2') -and (Has $r 'Continuing with the VPN on')) ("exit=$($r.Exit)")
+
+    $r = Invoke-Script $vpn -Arguments @('-NoZapret', '-HostsFile', $hosts, '-NoPrompt') -Feed -InputText '2'
+    Check 'vpn menu: -NoPrompt never asks' ($r.Exit -eq 3 -and -not (Has $r 'Classic - stop here')) ("exit=$($r.Exit)")
+
+    New-HostsFile $hosts ("# >>> discord-media-pin (auto) >>>`r`n162.159.141.232 media.discordapp.net`r`n# <<< discord-media-pin (auto) <<<`r`n127.0.0.1 localhost`r`n")
+    $r = Invoke-Script $vpn -Arguments @('-Remove', '-HostsFile', $hosts) -Feed -InputText ''
+    Check 'vpn menu: -Remove never asks and still works' ($r.Exit -eq 0 -and -not (Has $r 'Classic - stop here') -and (Count-Lines $hosts 'discord-media-pin') -eq 0) ("exit=$($r.Exit)")
+
+    # No tunnel: the variable alone must not turn the run into a questionnaire.
+    $noVpnMenu = New-Variant -Name 'menu-no-vpn' -SystemFile -Media 'ok' -Runner '@()'
+    New-HostsFile $hosts $plainHosts
+    $r = Invoke-Script $noVpnMenu -Arguments @('-NoZapret', '-HostsFile', $hosts) -Feed -InputText '2'
+    Check 'vpn menu: no VPN means no question' ($r.Exit -eq 0 -and -not (Has $r 'Classic - stop here')) ("exit=$($r.Exit)")
+}
+finally {
+    Remove-Item Env:\DISCORD_MEDIA_FIX_MENU -ErrorAction SilentlyContinue
+}
+
+# A failed run through the tunnel must blame the tunnel, not the provider.
+$vpnDead = New-Variant -Name 'vpn-dead' -Media 'dead' -AliveEmpty -Runner '@()' -VpnStub
+New-HostsFile $hosts $plainHosts
+$before = File-Hash $hosts
+$r = Invoke-Script $vpnDead -Arguments @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'vpn: a failed run through the tunnel names the tunnel, not the provider' ($r.Exit -eq 2 -and (Has $r 'ran through the tunnel') -and -not (Has $r 'None of them accepted a connection')) ("exit=$($r.Exit)")
+Check 'vpn: that run still leaves hosts alone' ((File-Hash $hosts) -eq $before)
 
 # ---------- no zapret folder ----------
 $noZapret = New-Variant -Name 'no-zapret' -SystemFile -Media 'ok' -Runner '@()'

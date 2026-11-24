@@ -39,6 +39,9 @@ if errorlevel 1 (
     exit /b
 )
 
+rem The .bat is the real entry point: it enables the VPN choice in the console.
+set "DISCORD_MEDIA_FIX_MENU=1"
+
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fix-discord-media.ps1" %*
 set "RC=%ERRORLEVEL%"
 echo.

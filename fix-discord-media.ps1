@@ -60,9 +60,9 @@
       -DryRun          print the result, change nothing
       -Force           re-probe and re-pin even if everything already works
       -NoZapret        do not touch zapret, only pin hosts
-      -IgnoreVpn       continue even when a VPN carries the default route
-                       (by default the script stops and explains: pins cannot
-                       be reached through a tunnel)
+      -IgnoreVpn       continue even when a VPN carries the default route -
+                       the same as answering 2 to the VPN question. The run then
+                       says everything was measured through the tunnel.
       -ZapretDir PATH  zapret folder (default: the folder of this script)
       -Config NAME     use only this config, no automatic switching,
                        e.g. "general (ALT11).bat"
@@ -71,7 +71,7 @@
       -RestartZapret   restart the bypass even when it already answers
                        (by default a working bypass is left alone)
       -Prompt          show the config menu instead of choosing automatically
-      -NoPrompt        never ask (automatic is already the default)
+      -NoPrompt        never ask anything: no config menu, no VPN question
       -ShowConfigs     list the configs found in the zapret folder and exit
       -HostsFile PATH  alternate hosts file (for testing)
       -Hosts NAME...   hostnames to pin (default: the three Discord media hosts)
@@ -113,7 +113,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.9.0'
+$AppVersion = '1.9.1'
 
 $ErrorActionPreference = 'Stop'
 
@@ -143,6 +143,12 @@ $scriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $systemHosts  = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
 $isSystemFile = ([IO.Path]::GetFullPath($HostsFile) -eq [IO.Path]::GetFullPath($systemHosts))
 $curlPath     = Join-Path $env:SystemRoot 'System32\curl.exe'
+
+# A real double-click goes through the .bat, which sets this variable: only then
+# does the VPN choice appear. Tests, scripts and -NoPrompt never see a question
+# they could not answer.
+$menuEnabled     = ($env:DISCORD_MEDIA_FIX_MENU -eq '1') -and -not $NoPrompt
+$continueWithVpn = $false
 
 # Cloudflare anycast addresses that serve the Discord CDN. The first ones are
 # known to answer even without a bypass; the rest of the range is scanned as a
@@ -910,20 +916,50 @@ if ($vpnDefault) {
     Write-Step ''
     if ($DryRun) {
         Write-Step ("VPN is on and carries all traffic: {0}" -f $vpnNames) 'Yellow'
-        Write-Step 'The fixed addresses only work on a direct connection - turn the VPN off for the real run.' 'Yellow'
-    }
-    elseif ($IgnoreVpn) {
-        Write-Step ("VPN is on ({0}) - continuing because -IgnoreVpn was passed." -f $vpnNames) 'Yellow'
+        Write-Step 'The pins only work on a direct connection. The real run offers a choice here:' 'Yellow'
+        Write-Step 'stop and keep the VPN off, or continue with the VPN on (see -IgnoreVpn).' 'Yellow'
     }
     else {
-        Write-Step ("VPN is on: {0}. Nothing was changed." -f $vpnNames) 'Red'
-        Write-Step 'This fix needs a direct connection. While the VPN is on, Discord images already' 'Yellow'
-        Write-Step 'travel through the tunnel - and zapret cannot help inside it.' 'Yellow'
-        Write-Step ''
-        Write-Step 'Turn the VPN off and run this file again.' 'Cyan'
-        Write-Step 'Or keep the VPN for everything else and send only Discord through it (split tunneling).' 'Cyan'
-        Write-Step 'To try anyway, add -IgnoreVpn.' 'Gray'
-        exit 3
+        # Classic stays the default. The VPN mode is a deliberate, explicit
+        # choice: it is only harmless when the tunnel does not carry the traffic
+        # these hosts are reached through.
+        $vpnChoice = 'classic'
+        if ($IgnoreVpn) {
+            $vpnChoice = 'vpn'
+        }
+        elseif ($menuEnabled) {
+            Write-Step ("VPN is on and carries your traffic: {0}" -f $vpnNames) 'Yellow'
+            Write-Step 'The pins only work on a direct connection: inside a tunnel these addresses' 'Yellow'
+            Write-Step 'are unreachable, and zapret cannot help there either.' 'Yellow'
+            Write-Step ''
+            Write-Step '  1  Classic - stop here, turn the VPN off and run again   (default)' 'Gray'
+            Write-Step '  2  With the VPN on - only if Discord bypasses this tunnel' 'Gray'
+            Write-Step ''
+            while ($true) {
+                $answer = Read-Host '  Choice'
+                if ($null -eq $answer) { $answer = '' } else { $answer = $answer.Trim() }
+                if ($answer -eq '' -or $answer -eq '1') { $vpnChoice = 'classic'; break }
+                if ($answer -eq '2') { $vpnChoice = 'vpn'; break }
+                Write-Step '  Type 1 or 2, or press Enter for the classic run.' 'Yellow'
+            }
+            Write-Step ''
+        }
+
+        if ($vpnChoice -eq 'vpn') {
+            $continueWithVpn = $true
+            Write-Step ("Continuing with the VPN on ({0})." -f $vpnNames) 'Yellow'
+            Write-Step 'Everything measured from here goes through that tunnel, not through your provider.' 'DarkGray'
+        }
+        else {
+            Write-Step ("VPN is on: {0}. Nothing was changed." -f $vpnNames) 'Red'
+            Write-Step 'This fix needs a direct connection. While the VPN is on, Discord images already' 'Yellow'
+            Write-Step 'travel through the tunnel - and zapret cannot help inside it.' 'Yellow'
+            Write-Step ''
+            Write-Step 'Turn the VPN off and run this file again.' 'Cyan'
+            Write-Step 'If Discord already works on this VPN, you do not need this fix at all.' 'Cyan'
+            Write-Step 'If only Discord should go around the tunnel, set up split tunneling and run again.' 'Cyan'
+            exit 3
+        }
     }
 }
 elseif ($vpnAdapters.Count -gt 0) {
@@ -1208,7 +1244,19 @@ if ($needFix) {
         Write-Step ''
         Write-Step 'No address answered.' 'Red'
 
-        if ($reason -eq 'blackhole') {
+        if ($continueWithVpn) {
+            # Every probe went through a tunnel, so the verdicts below would be a
+            # lie: the tunnel itself produces exactly these results.
+            Write-Step 'The probes ran through the tunnel, so they cannot tell you what your provider blocks.' 'Yellow'
+            Write-Step ''
+            Write-Step 'What this means:' 'Cyan'
+            Write-Step '  - if Discord media work on this VPN, you do not need this fix;' 'Cyan'
+            Write-Step '  - if they do not, the tunnel is not helping either: try another server or another VPN;' 'Cyan'
+            Write-Step '  - and either way, pinned addresses cannot work inside a tunnel.' 'Cyan'
+            Write-Step ''
+            Write-Step ('Details: no answer from inside the tunnel ({0}).' -f $vpnNames) 'DarkGray'
+        }
+        elseif ($reason -eq 'blackhole') {
             # Which of the four blocks is it? Only the port case leaves a way out
             # without a tunnel, so this is worth the half minute it can take.
             Write-Step ''
