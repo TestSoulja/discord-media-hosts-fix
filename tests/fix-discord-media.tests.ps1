@@ -352,6 +352,61 @@ Check 'static: CHANGELOG has this version' ($changelog.Contains("## [$appVersion
 $r = Invoke-Script $srcPath @('-Version')
 Check 'version: exit 0 and prints the AppVersion' ($r.Exit -eq 0 -and (Has $r $appVersion)) ($r.Lines -join ' | ')
 
+# ---------- the .bat entry point must actually run ----------
+# cmd parses a whole parenthesised block before running any of it: one unescaped
+# ')' in a message closes the block early and the whole file dies with "then was
+# unexpected at this time" (exit 255). Static checks cannot see that, so these
+# start the real files through cmd the way a double-click does. stdin is <nul so
+# `pause` returns instead of waiting for a key.
+function Invoke-Bat {
+    param([string]$Directory, [string]$FileName, [string]$Arguments)
+    $outFile = Join-Path $Directory 'bat-out.txt'
+    Remove-Item -LiteralPath $outFile -ErrorAction SilentlyContinue
+    Push-Location $Directory
+    try {
+        & cmd /c "`"$FileName`" $Arguments <nul > `"$outFile`" 2>&1"
+        $code = $LASTEXITCODE
+        $text = ''
+        if (Test-Path -LiteralPath $outFile) { $text = [IO.File]::ReadAllText($outFile) }
+        return @{ Exit = $code; Text = $text }
+    }
+    finally { Pop-Location }
+}
+
+$batVersionDir = Join-Path $testRoot 'bat-version'
+New-Item -ItemType Directory -Path $batVersionDir -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $root 'fix-discord-media.bat') -Destination $batVersionDir -Force
+Copy-Item -LiteralPath $srcPath -Destination $batVersionDir -Force
+$b = Invoke-Bat -Directory $batVersionDir -FileName 'fix-discord-media.bat' -Arguments '-Version'
+$bTail = (($b.Text -split "`r?`n" | Where-Object { $_.Trim() }) -join ' | ')
+Check 'bat: the entry point starts and prints the version' `
+    ($b.Exit -eq 0 -and $b.Text.Contains($appVersion) -and $b.Text -notmatch 'was unexpected') `
+    ("exit=$($b.Exit) $bTail")
+
+$batAloneDir = Join-Path $testRoot 'bat-alone'
+New-Item -ItemType Directory -Path $batAloneDir -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $root 'fix-discord-media.bat') -Destination $batAloneDir -Force
+$b = Invoke-Bat -Directory $batAloneDir -FileName 'fix-discord-media.bat' -Arguments ''
+$bTail = (($b.Text -split "`r?`n" | Where-Object { $_.Trim() }) -join ' | ')
+Check 'bat: a missing .ps1 is reported, not a cmd parse error' `
+    ($b.Exit -eq 1 -and
+     $b.Text.Contains('fix-discord-media.ps1 is missing next to this file.') -and
+     $b.Text.Contains('restore it from quarantine (or unpack the') -and
+     $b.Text.Contains('archive again), then run this file again.') -and
+     $b.Text -notmatch 'was unexpected') `
+    ("exit=$($b.Exit) $bTail")
+
+$removeAloneDir = Join-Path $testRoot 'bat-remove-alone'
+New-Item -ItemType Directory -Path $removeAloneDir -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $root 'remove-pins.bat') -Destination $removeAloneDir -Force
+$b = Invoke-Bat -Directory $removeAloneDir -FileName 'remove-pins.bat' -Arguments ''
+$bTail = (($b.Text -split "`r?`n" | Where-Object { $_.Trim() }) -join ' | ')
+Check 'bat: remove-pins reports a missing .ps1 the same way' `
+    ($b.Exit -eq 1 -and
+     $b.Text.Contains('fix-discord-media.ps1 is missing next to this file.') -and
+     $b.Text -notmatch 'was unexpected') `
+    ("exit=$($b.Exit) $bTail")
+
 New-HostsFile $hosts $plainHosts
 $before = File-Hash $hosts
 $r = Invoke-Script $srcPath @('-NoRestart', '-RestartDiscord', '-HostsFile', $hosts)

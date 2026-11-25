@@ -113,7 +113,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.10.0'
+$AppVersion = '1.10.1'
 
 $ErrorActionPreference = 'Stop'
 

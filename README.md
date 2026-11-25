@@ -6,7 +6,7 @@ The script checks that no VPN is carrying the traffic, starts your zapret config
 
 > **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
 
-**Version 1.10.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
+**Version 1.10.1** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -308,7 +308,9 @@ This is a versioned project, not a loose set of scripts.
 - Release checklist: bump `$AppVersion` → update the version line in README → add a CHANGELOG entry → commit → tag `v<version>` → push the tag.
 - Manual fallback: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<version>`, then upload `dist/discord-media-hosts-fix.zip` and `dist/SHA256SUMS` to the release.
 
-The current release is **v1.10.0**.
+The current release is **v1.10.1**.
+
+Version 1.10.0 never started: an unescaped `)` in the missing-`.ps1` message closed the `.bat` block and cmd rejected the whole file (`then was unexpected at this time`). If you have 1.10.0, replace it with 1.10.1 — the archive is rebuilt from the fix and the 1.10.0 entry point is not usable.
 
 ## License
 
@@ -563,4 +565,6 @@ This one works - keeping it.
 - Порядок выпуска: поднять `$AppVersion` → обновить строку версии в README → добавить запись в CHANGELOG → коммит → тег `v<версия>` → пуш тега.
 - Запасной путь: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<версия>`, затем загрузить `dist/discord-media-hosts-fix.zip` и `dist/SHA256SUMS` в релиз.
 
-Текущий релиз — **v1.10.0**.
+Текущий релиз — **v1.10.1**.
+
+Версия 1.10.0 не запускалась: незаэкранированная `)` в сообщении об отсутствующем `.ps1` закрывала блок `.bat`, и cmd отвергал весь файл (`then was unexpected at this time`). Если у вас 1.10.0 — замените её на 1.10.1: архив пересобран с исправлением, вход 1.10.0 не работает.

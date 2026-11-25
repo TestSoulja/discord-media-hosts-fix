@@ -17,7 +17,26 @@ always contains exactly the three working files:
 The workflow builds it with the same Windows PowerShell as the documented local
 command, so the released archive is byte-identical to a local rebuild.
 
+## [1.10.1] - 2026-11-25
+
+### Fixed
+
+- **1.10.0 did not start.** `fix-discord-media.bat` had an unescaped `)` inside
+  the missing-`.ps1` message: cmd took it as the end of the `if not exist (...)`
+  block and rejected the whole file with `then was unexpected at this time`,
+  exit 255 — a double-click did nothing. The parentheses are escaped (`^(` and
+  `^)`), the message reads exactly as before, and `remove-pins.bat` needed no
+  change. The 1.10.0 archive in the release is replaced by 1.10.1.
+- Three execution checks now start the real `.bat` files through `cmd /c <nul>`:
+  `-Version` prints the version and exits 0, and each `.bat` run without its
+  `.ps1` names the missing file and exits 1. On the 1.10.0 entry point they fail
+  with the same `was unexpected` error a person saw.
+
 ## [1.10.0] - 2026-11-25
+
+**Broken entry point.** `fix-discord-media.bat` in this release does not start:
+an unescaped `)` in the missing-`.ps1` message ends the `if` block and cmd
+rejects the file (`then was unexpected at this time`, exit 255). Use 1.10.1.
 
 The fix no longer gives up on a network where only a few addresses of the
 Discord CDN range answer — the profile where a manual `curl --resolve` loop
