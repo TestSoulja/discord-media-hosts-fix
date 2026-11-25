@@ -406,6 +406,16 @@ $r = Invoke-Script $write @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
 Check 'write: second run is idempotent' ($r.Exit -eq 0 -and (Has $r 'already correct') -and (File-Hash $hosts) -eq $afterWrite)
 Check 'write: second run creates no backup' ((@(Get-ChildItem -Path ("{0}.bak-*" -f $hosts))).Count -eq $backupsNow)
 
+# A changed pin is a reason to restart: the line names the client, and the
+# client really goes through stop/start rather than being left with the old
+# addresses. (The happy-path restart is covered separately above.)
+$writeClient = New-Variant -Name 'write-client' -Media 'dead' -AliveStub -Runner "@('Discord')"
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $writeClient @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
+Check 'write: changed pins restart the open client by name' `
+    ($r.Exit -eq 0 -and (Has $r 'Restarting so the new addresses are picked up: Discord') -and (Has $r '[test] stop Discord') -and (Has $r '[test] start Discord')) `
+    ("exit=$($r.Exit)")
+
 New-HostsFile $hosts $plainHosts
 $r = Invoke-Script $write @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Hosts', 'a.test,b.test')
 Check 'write: custom -Hosts list is split' ((Count-Lines $hosts 'a\.test') -eq 4 -and (Count-Lines $hosts 'b\.test') -eq 4 -and (Count-Lines $hosts 'media\.discordapp\.net') -eq 0) ("exit=$($r.Exit)")
@@ -546,6 +556,11 @@ Check 'sweep: one answering address deep in the range is pinned' `
     ("exit=$($r.Exit)")
 Check 'sweep: a minority profile is not reported as a dead network' `
     (-not (Has $r 'No address answered') -and -not (Has $r 'None of them accepted a connection'))
+# The silent majority becomes one line with a count, not one line per address.
+# 28 candidates, one alive, so both the count and the single-line shape are
+# asserted: a count that drifts means the summary is lying about the sweep.
+Check 'sweep: silent addresses are summed up with a count' `
+    (Has $r '27 addresses did not answer')
 
 $fallback = New-Variant -Name 'sweep-fallback' -SystemFile -FakeProbes -RealProbes -NoParallel `
     -AliveIps @('162.159.140.232')
@@ -710,8 +725,12 @@ $tlsStub = @'
 function Get-PortVerdict { param([string[]]$Addresses, [string]$HostName = 'media.discordapp.net', [int]$TimeoutSec = 5) return @{ Kind = 'tls'; Port = 0; Ip = '162.159.141.232'; Detail = '' } }
 '@
 $diagTls = New-Variant -Name 'diag-tls' -Media 'dead' -AliveEmpty -Runner '@()' -ExtraStubs $tlsStub
+$beforeTls = File-Hash $hosts
 $r = Invoke-Script $diagTls @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn')
 Check 'diagnostics: a killed handshake is named as a block by name' ($r.Exit -eq 2 -and (Has $r 'TLS handshake is killed') -and (Has $r 'block by name')) ("exit=$($r.Exit)")
+# The release notes promise "named as such and nothing is written": the name and
+# the exit code are above, this is the second half.
+Check 'diagnostics: a TLS-by-name block writes nothing' ((File-Hash $hosts) -eq $beforeTls)
 
 $refusedStub = @'
 function Get-PortVerdict { param([string[]]$Addresses, [string]$HostName = 'media.discordapp.net', [int]$TimeoutSec = 5) return @{ Kind = 'refused'; Port = 0; Ip = '162.159.141.232'; Detail = '' } }
