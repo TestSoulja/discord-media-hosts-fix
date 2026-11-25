@@ -27,8 +27,17 @@ shows a mix of success and `exit=28`.
 
 - The sweep probes the whole known range instead of the first eight addresses,
   in one `curl --parallel` process. A curl older than 7.66 falls back to one
-  process per address, so the fix still works on Windows 10 1803–1909; such a
-  run takes longer than the parallel one. Worst case is about a minute.
+  process per address, so the fix still works on Windows 10 1803–1909. Measured
+  twice on a network where nothing answered: 57–58 s in total — 24 s for 28
+  addresses in four waves of eight, 24 s for the 12-address retry at twice the
+  timeout, 8 s for the diagnosis that follows. Without `--parallel` the same
+  range takes about five minutes, because the waves become one probe after
+  another.
+- The batch is read one record per address: a newline is no longer built into
+  the argument list (a real newline became a separate argument and broke `-w`),
+  and a line with two `?probe=` tags is refused instead of credited to the last
+  address in it. A batch that reports fewer addresses than it was given is
+  counted out loud, and the remainder is not retried one by one for minutes.
 - Resolver answers for `media.discordapp.net` are probed too, so an address
   outside the hardcoded range can be used when the pins rotated.
 - After the write, every pinned name is requested through `hosts`. A node that
@@ -43,6 +52,8 @@ shows a mix of success and `exit=28`.
   already did; the `.bat` explains a `fix-discord-media.ps1` taken by an
   antivirus; troubleshooting says when the HTTPS-interceptor line can appear
   and that a blocked WinDivert driver is only visible indirectly.
+- A test guards that the entry point still sets `DISCORD_MEDIA_FIX_MENU` before
+  it runs the script, so the VPN choice cannot vanish from a release unnoticed.
 
 ## [1.9.1] - 2026-11-25
 

@@ -33,7 +33,11 @@ function Invoke-CurlRaw {
     param([string[]]$CurlArgs)
     $all = ($CurlArgs -join ' ')
     $alive = @(__ALIVE__)
+    $drop = @(__DROP__)
     $global:LASTEXITCODE = 0
+    if ('__ARGVLOG__' -ne '') {
+        foreach ($a in $CurlArgs) { Add-Content -LiteralPath '__ARGVLOG__' -Value (ConvertTo-Json -Compress $a) -Encoding UTF8 }
+    }
     if ($all -match '--version') { return @('curl 8.22.0 (Windows) libcurl/8.22.0') }
 
     $ips = @([regex]::Matches($all, 'probe=([0-9.]+)') | ForEach-Object { $_.Groups[1].Value })
@@ -46,6 +50,7 @@ function Invoke-CurlRaw {
         $lines = @()
         $ok = 0
         foreach ($ip in $ips) {
+            if ($drop -contains $ip) { continue }
             if ($alive -contains $ip) {
                 $ok++
                 $lines += "200 0.010 0.040 https://media.discordapp.net/?probe=$ip"
@@ -89,7 +94,9 @@ function New-Variant {
         [switch]$RealProbes,
         [string[]]$AliveIps = @(),
         [string]$ThroughCode = '200',
-        [string[]]$DnsIps = @()
+        [string[]]$DnsIps = @(),
+        [string]$ArgvLog = '',
+        [string[]]$DropIps = @()
     )
 
     $code = $src
@@ -141,6 +148,7 @@ function Stop-Winws { Write-Host '[test] winws stop skipped' -ForegroundColor Da
 function Get-VpnDefaultRoute { return `$null }
 function Get-VpnAdapters { return @() }
 function Get-PortVerdict { param([string[]]`$Addresses, [string]`$HostName = 'media.discordapp.net', [int]`$TimeoutSec = 5) return @{ Kind = 'ip'; Port = 0; Ip = ''; Detail = '' } }
+function Get-BlockDiagnosis { param([string[]]`$Addresses, [int]`$TimeoutMs = 6000) return 'blackhole' }
 function Get-TlsIssuer { param([string]`$HostName = 'discord.com', [int]`$Port = 443, [int]`$TimeoutMs = 6000) return '' }
 function Get-TlsInterceptor { param([string[]]`$HostNames = @('discord.com','example.com')) return `$null }
 function Invoke-CurlRaw { param([string[]]`$CurlArgs) `$global:LASTEXITCODE = 0; return @('200') }
@@ -155,7 +163,6 @@ function Get-AliveAddresses { param([string[]]`$Candidates, [string]`$HostName =
     if ($AliveEmpty) {
         $stubs += @"
 function Get-AliveAddresses { param([string[]]`$Candidates, [string]`$HostName = 'media.discordapp.net', [int]`$Limit = 10, [int]`$TimeoutSec = 6, [int]`$Wanted = 4) return @() }
-function Get-BlockDiagnosis { param([string[]]`$Addresses, [int]`$TimeoutMs = 6000) return 'blackhole' }
 "@
     }
     if ($VpnStub) {
@@ -186,7 +193,8 @@ function Get-HostsText { param([string]$Path)
     if ($ExtraStubs) { $stubs += "`r`n" + $ExtraStubs }
     if ($FakeProbes) {
         $aliveList = (@($AliveIps | ForEach-Object { "'$_'" }) -join ',')
-        $stubs += "`r`n" + $fakeCurl.Replace('__ALIVE__', $aliveList).Replace('__THROUGH__', $ThroughCode)
+        $dropList = (@($DropIps | ForEach-Object { "'$_'" }) -join ',')
+        $stubs += "`r`n" + $fakeCurl.Replace('__ALIVE__', $aliveList).Replace('__THROUGH__', $ThroughCode).Replace('__ARGVLOG__', $ArgvLog).Replace('__DROP__', $dropList)
     }
     if ($NoParallel) {
         $stubs += "`r`n" + 'function Test-CurlParallel { return $false }'
@@ -320,6 +328,16 @@ Check 'static: the VPN menu exists' ($src.Contains('Classic - stop here') -and $
 Check 'static: curl is invoked in exactly one place' `
     (([regex]::Matches($src, '& \$curlPath')).Count -eq 1)
 Check 'static: the parallel batch needs curl 7.66' ($src.Contains('$minor -ge 66'))
+
+# The VPN question appears only when the entry point sets this variable. The
+# menu text is asserted above; this asserts the .bat still turns the menu on,
+# and does it before the run - a variable set after the call would do nothing.
+$bat = [IO.File]::ReadAllText((Join-Path $root 'fix-discord-media.bat'))
+$menuAt = $bat.IndexOf('set "DISCORD_MEDIA_FIX_MENU=1"')
+$runAt = $bat.IndexOf('-File "%~dp0fix-discord-media.ps1" %*')
+Check 'static: the .bat enables the VPN menu before the run' `
+    ($menuAt -ge 0 -and $runAt -ge 0 -and $menuAt -lt $runAt) `
+    ("menuAt=$menuAt runAt=$runAt")
 
 # ---------- version / conflict ----------
 $appVersion = [regex]::Match($src, '(?m)^\$AppVersion = ''([0-9]+\.[0-9]+\.[0-9]+)''').Groups[1].Value
@@ -534,6 +552,15 @@ Check 'sweep: an old curl without --parallel still finds it' `
     ($r.Exit -eq 0 -and (Count-Lines $hosts '^162\.159\.140\.232 media\.discordapp\.net') -eq 1) `
     ("exit=$($r.Exit)")
 
+# A batch that parsed fewer records than it was given must say so, and must not
+# turn the missing ones into a minute of one-process-per-address probing.
+$partial = New-Variant -Name 'sweep-partial' -SystemFile -FakeProbes -RealProbes -DropIps @('162.159.130.232')
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $partial @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'sweep: a batch that lost a record is counted out loud' `
+    ((Has $r 'the parallel probe reported') -and (Has $r 'the rest are not retried one by one')) `
+    (($r.Lines | Where-Object { $_ -match 'parallel probe' }) -join '; ')
+
 # ---------- candidates: the resolver is a source too ----------
 $dns = New-Variant -Name 'dns-candidates' -SystemFile -FakeProbes -RealProbes `
     -AliveIps @('188.114.97.3') -DnsIps @('188.114.97.3')
@@ -574,6 +601,59 @@ $r = Invoke-Script $noCurlWrite @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn
 Check 'verify: without curl it does not pretend the names were checked' `
     ($r.Exit -eq 0 -and (Has $r '-Force was passed') -and -not (Has $r 'do not answer through them')) `
     ("exit=$($r.Exit)")
+
+# ---------- batch: what curl actually receives, and what it answers ----------
+# The fake network above sits on Invoke-CurlRaw, so it never saw the argument
+# list. A real newline in argv broke every wide sweep in 1.10.0 while the fake
+# kept answering: the suite was green and the shipped script fell back to one
+# process per address. These two checks close that gap from both ends.
+$argvLog = Join-Path $testRoot 'argv-batch.log'
+Remove-Item -LiteralPath $argvLog -ErrorAction SilentlyContinue
+$hygiene = New-Variant -Name 'argv-hygiene' -SystemFile -FakeProbes -RealProbes -ArgvLog $argvLog
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $hygiene @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+$argvSeen = @()
+if (Test-Path -LiteralPath $argvLog) {
+    $argvSeen = @(Get-Content -LiteralPath $argvLog | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+}
+Check 'argv: curl received a --parallel invocation' `
+    (@($argvSeen | Where-Object { $_ -eq '--parallel' }).Count -ge 1) `
+    ("args={0}" -f $argvSeen.Count)
+$newlineArgs = @($argvSeen | Where-Object { $_ -match "[`r`n]" })
+Check 'argv: no argument handed to curl contains a raw CR or LF' `
+    ($newlineArgs.Count -eq 0) `
+    (($newlineArgs | ForEach-Object { '[' + ($_ -replace "`r", '\r' -replace "`n", '\n') + ']' }) -join ' ')
+
+# Lifted from the shipped file rather than copied: if the functions move or change
+# shape, this check says so instead of testing a stale copy. Two loopback
+# addresses on a dead port need no network: both transfers must still produce
+# their own line, attributed to their own tag.
+$fnStart = $src.IndexOf('function Invoke-CurlRaw {')
+$fnEnd = $src.IndexOf('# One HTTPS request that keeps the reason it failed.')
+$fnText = ''
+if ($fnStart -ge 0 -and $fnEnd -gt $fnStart) { $fnText = $src.Substring($fnStart, $fnEnd - $fnStart) }
+Check 'batch: the probe functions can be lifted for a live check' `
+    ($fnText -match 'function Invoke-CurlRaw' -and $fnText -match 'function Test-CurlParallel' -and $fnText -match 'function Get-ProbeBatch')
+
+$livePath = Join-Path $testRoot 'batch-live.ps1'
+$liveBody = @'
+$ErrorActionPreference = 'Stop'
+$curlPath = '__CURL__'
+__FUNCS__
+$b = Get-ProbeBatch -Addresses @('127.0.0.1', '127.0.0.2') -Port 1 -TimeoutSec 3
+"keys=$($b.Keys.Count)"
+"one=$($b['127.0.0.1'])"
+"two=$($b['127.0.0.2'])"
+'@
+$liveBody = $liveBody.Replace('__CURL__', (Join-Path $env:SystemRoot 'System32\curl.exe')).Replace('__FUNCS__', $fnText)
+Set-Content -LiteralPath $livePath -Value $liveBody -Encoding UTF8
+$live = Invoke-Script $livePath @()
+Check 'batch: real curl returns one line per address (2 of 2 keys)' `
+    ((Has $live 'keys=2') -and (Has $live 'one=dead') -and (Has $live 'two=dead')) `
+    (($live.Lines | Where-Object { $_ -match '^(keys|one|two)=' }) -join '; ')
+Check 'batch: a silent address is attributed, not dropped' `
+    ((Has $live 'one=dead') -and (Has $live 'two=dead')) `
+    (($live.Lines | Where-Object { $_ -match '^(keys|one|two)=' }) -join '; ')
 
 # ---------- diagnostics: what exactly is blocked ----------
 $diagIp = New-Variant -Name 'diag-ip' -Media 'dead' -AliveEmpty -Runner '@()'

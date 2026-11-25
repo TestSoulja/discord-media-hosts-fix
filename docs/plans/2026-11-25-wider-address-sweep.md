@@ -287,17 +287,29 @@ function Get-ProbeBatch {
     if (-not $Addresses -or $Addresses.Count -eq 0) { return $states }
     if (-not (Test-CurlParallel)) { return $states }
 
-    $curlArgs = @('-s', '--parallel', '--parallel-max', "$MaxParallel", '-m', "$TimeoutSec",
-                  '-w', '%{http_code} %{time_connect} %{time_appconnect} %{url_effective}' + "`n")
+    # The record separator is a literal \n, expanded by curl itself. Do not build a
+    # real newline here: '@(..., 'x' + "`n")' is the array plus a string, so the
+    # newline becomes its own argument, -w loses it and every record is glued to
+    # the next. That is the defect that shipped in 1.10.0 and took 20 minutes.
+    $format = '%{http_code} %{time_connect} %{time_appconnect} %{url_effective}\n'
+    $curlArgs = New-Object System.Collections.Generic.List[string]
+    foreach ($part in @('-s', '--parallel', '--parallel-max', "$MaxParallel", '-m', "$TimeoutSec", '-w', $format)) {
+        $curlArgs.Add($part)
+    }
     foreach ($ip in $Addresses) {
-        $curlArgs += @('-o', 'NUL',
-                       '--resolve', "${HostName}:${Port}:$ip",
-                       ("https://{0}:{1}/?probe={2}" -f $HostName, $Port, $ip))
+        $curlArgs.Add('-o')
+        $curlArgs.Add('NUL')
+        $curlArgs.Add('--resolve')
+        $curlArgs.Add("${HostName}:${Port}:$ip")
+        $curlArgs.Add(("https://{0}:{1}/?probe={2}" -f $HostName, $Port, $ip))
     }
 
-    foreach ($line in @(Invoke-CurlRaw -CurlArgs $curlArgs)) {
+    foreach ($line in @(Invoke-CurlRaw -CurlArgs $curlArgs.ToArray())) {
         # http_code connect_time appconnect_time url
-        if ($line -notmatch '^(\d{3}) (\d+\.?\d*) (\d+\.?\d*) .*\?probe=([0-9.]+)') { continue }
+        # Exactly one tag per line: a glued pair must be refused, not credited to
+        # the last address in it.
+        if (([regex]::Matches($line, '\?probe=')).Count -ne 1) { continue }
+        if ($line -notmatch '^(\d{3}) (\d+\.?\d*) (\d+\.?\d*) \S*\?probe=([0-9.]+)$') { continue }
         $code = $Matches[1]
         $connect = [double]$Matches[2]
         $appconnect = [double]$Matches[3]

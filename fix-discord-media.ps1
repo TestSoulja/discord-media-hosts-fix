@@ -525,17 +525,29 @@ function Get-ProbeBatch {
     if (-not $Addresses -or $Addresses.Count -eq 0) { return $states }
     if (-not (Test-CurlParallel)) { return $states }
 
-    $curlArgs = @('-s', '--parallel', '--parallel-max', "$MaxParallel", '-m', "$TimeoutSec",
-                  '-w', '%{http_code} %{time_connect} %{time_appconnect} %{url_effective}' + "`n")
+    # The record separator is a literal \n, which curl expands itself. A real
+    # newline must never be built into argv: '@(..., 'x' + "`n")' is the array
+    # plus a string, so the newline becomes its own argument and -w loses it.
+    $format = '%{http_code} %{time_connect} %{time_appconnect} %{url_effective}\n'
+    $curlArgs = New-Object System.Collections.Generic.List[string]
+    foreach ($part in @('-s', '--parallel', '--parallel-max', "$MaxParallel", '-m', "$TimeoutSec", '-w', $format)) {
+        $curlArgs.Add($part)
+    }
     foreach ($ip in $Addresses) {
-        $curlArgs += @('-o', 'NUL',
-                       '--resolve', "${HostName}:${Port}:$ip",
-                       ("https://{0}:{1}/?probe={2}" -f $HostName, $Port, $ip))
+        $curlArgs.Add('-o')
+        $curlArgs.Add('NUL')
+        $curlArgs.Add('--resolve')
+        $curlArgs.Add("${HostName}:${Port}:$ip")
+        $curlArgs.Add(("https://{0}:{1}/?probe={2}" -f $HostName, $Port, $ip))
     }
 
-    foreach ($line in @(Invoke-CurlRaw -CurlArgs $curlArgs)) {
+    foreach ($line in @(Invoke-CurlRaw -CurlArgs $curlArgs.ToArray())) {
         # http_code connect_time appconnect_time url
-        if ($line -notmatch '^(\d{3}) (\d+\.?\d*) (\d+\.?\d*) .*\?probe=([0-9.]+)') { continue }
+        # Exactly one tag per line or the line is dropped: a glued pair of records
+        # would otherwise be credited to the last address in it - a wrong answer
+        # is worse than a missing one.
+        if (([regex]::Matches($line, '\?probe=')).Count -ne 1) { continue }
+        if ($line -notmatch '^(\d{3}) (\d+\.?\d*) (\d+\.?\d*) \S*\?probe=([0-9.]+)$') { continue }
         $code = $Matches[1]
         $connect = [double]$Matches[2]
         $appconnect = [double]$Matches[3]
@@ -813,6 +825,25 @@ function Get-AliveAddresses {
     $silent = 0
     $oneByOne = 0
 
+    # A batch that answered for most of the list is trusted; a few silent addresses
+    # are an anomaly, not a reason to spend minutes on them one at a time. A batch
+    # that answered for nothing at all is announced, because the slow path that
+    # follows is the only way to a verdict then.
+    $lost = @($queue | Where-Object { -not $batch.ContainsKey($_) }).Count
+    $fallbackLimit = $Limit
+    if ($lost -gt 0 -and $batch.Count -gt 0) {
+        $fallbackLimit = 6
+        Write-Step ("  the parallel probe reported {0} of {1} addresses - the rest are not retried one by one" -f $batch.Count, $queue.Count) 'Yellow'
+    }
+    elseif ($lost -gt 0 -and $batch.Count -eq 0) {
+        if (Test-CurlParallel) {
+            Write-Step '  the parallel probe reported nothing - checking one address at a time (slow)' 'Yellow'
+        }
+        else {
+            Write-Step '  this curl has no --parallel - checking one address at a time (slower)' 'DarkGray'
+        }
+    }
+
     foreach ($ip in $queue) {
         if ($alive.Count -ge $Wanted) { break }
 
@@ -827,7 +858,7 @@ function Get-AliveAddresses {
             continue
         }
 
-        if ($oneByOne -ge $Limit) { break }
+        if ($oneByOne -ge $fallbackLimit) { break }
         $oneByOne++
 
         $result = Test-MediaEndpoint -ResolveTo $ip -HostName $HostName -TimeoutSec $TimeoutSec
