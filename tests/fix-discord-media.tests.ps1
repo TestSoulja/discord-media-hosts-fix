@@ -60,6 +60,7 @@ function Invoke-CurlRaw {
             }
         }
         if ($ok -eq 0) { $global:LASTEXITCODE = 28 }
+        if ('__GLUE__' -eq 'yes') { return @(($lines -join '')) }
         return $lines
     }
 
@@ -96,7 +97,8 @@ function New-Variant {
         [string]$ThroughCode = '200',
         [string[]]$DnsIps = @(),
         [string]$ArgvLog = '',
-        [string[]]$DropIps = @()
+        [string[]]$DropIps = @(),
+        [switch]$GlueLines
     )
 
     $code = $src
@@ -194,7 +196,8 @@ function Get-HostsText { param([string]$Path)
     if ($FakeProbes) {
         $aliveList = (@($AliveIps | ForEach-Object { "'$_'" }) -join ',')
         $dropList = (@($DropIps | ForEach-Object { "'$_'" }) -join ',')
-        $stubs += "`r`n" + $fakeCurl.Replace('__ALIVE__', $aliveList).Replace('__THROUGH__', $ThroughCode).Replace('__ARGVLOG__', $ArgvLog).Replace('__DROP__', $dropList)
+        $glue = if ($GlueLines) { 'yes' } else { 'no' }
+        $stubs += "`r`n" + $fakeCurl.Replace('__ALIVE__', $aliveList).Replace('__THROUGH__', $ThroughCode).Replace('__ARGVLOG__', $ArgvLog).Replace('__DROP__', $dropList).Replace('__GLUE__', $glue)
     }
     if ($NoParallel) {
         $stubs += "`r`n" + 'function Test-CurlParallel { return $false }'
@@ -551,6 +554,10 @@ $r = Invoke-Script $fallback @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', 
 Check 'sweep: an old curl without --parallel still finds it' `
     ($r.Exit -eq 0 -and (Count-Lines $hosts '^162\.159\.140\.232 media\.discordapp\.net') -eq 1) `
     ("exit=$($r.Exit)")
+# The empty batch on that path is not silent: the slow route is named, because a
+# person watching a five-minute run deserves to know why it is slow.
+Check 'sweep: an old curl names the slow path' `
+    (Has $r 'this curl has no --parallel - checking one address at a time (slower)')
 
 # A batch that parsed fewer records than it was given must say so, and must not
 # turn the missing ones into a minute of one-process-per-address probing.
@@ -559,6 +566,16 @@ New-HostsFile $hosts $plainHosts
 $r = Invoke-Script $partial @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
 Check 'sweep: a batch that lost a record is counted out loud' `
     ((Has $r 'the parallel probe reported') -and (Has $r 'at most six of the rest are retried one by one')) `
+    (($r.Lines | Where-Object { $_ -match 'parallel probe' }) -join '; ')
+
+# A glued response - several records in one line, exactly what the broken 1.10.0
+# produced - must yield no keys at all. The greedy parser credited such a line to
+# the last address in it, and a wrong attribution is worse than a missing one.
+$glued = New-Variant -Name 'sweep-glued' -SystemFile -FakeProbes -RealProbes -GlueLines
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $glued @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'sweep: a glued batch is refused, not guessed' `
+    ((Has $r 'the parallel probe reported nothing') -and (Count-Lines $hosts '^162\.159\.') -eq 0) `
     (($r.Lines | Where-Object { $_ -match 'parallel probe' }) -join '; ')
 
 # ---------- candidates: the resolver is a source too ----------
@@ -578,6 +595,15 @@ $r = Invoke-Script $refused @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '
 Check 'verify: a node that refuses the host is not called a success' `
     ($r.Exit -eq 1 -and (Has $r 'do not answer through them')) ("exit=$($r.Exit)")
 Check 'verify: the refused run does not print the success line' (-not (Has $r 'Address list updated'))
+
+# 403 and 421 are the same verdict in the code; the second one exists so a future
+# edit that special-cases only 421 cannot pass unnoticed.
+$forbidden = New-Variant -Name 'verify-403' -SystemFile -FakeProbes -RealProbes `
+    -AliveIps @('162.159.137.232') -ThroughCode '403'
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $forbidden @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'verify: an HTTP 403 node is refused like 421' `
+    ($r.Exit -eq 1 -and (Has $r 'refused this host (HTTP 403)')) ("exit=$($r.Exit)")
 
 $dead = New-Variant -Name 'verify-dead' -SystemFile -FakeProbes -RealProbes `
     -AliveIps @('162.159.137.232') -ThroughCode '000'

@@ -23,6 +23,16 @@ The fix no longer gives up on a network where only a few addresses of the
 Discord CDN range answer — the profile where a manual `curl --resolve` loop
 shows a mix of success and `exit=28`.
 
+**What a run looks like now.** Still one double-click and no questions, apart
+from the VPN choice when a tunnel carries the default route. The run probes the
+whole known range plus whatever the resolver returns for
+`media.discordapp.net`, so it also recovers when the pinned addresses have
+rotated. A network where a minority of the range answers ends with pins. A
+network where no address answers, or where TCP connects but TLS dies by name,
+is named as such and nothing is written (exit code `2`). A write that cannot be
+confirmed through the names exits with code `1` instead of printing "Address
+list updated" over pins that would leave images broken.
+
 ### Added
 
 - The sweep probes the whole known range instead of the first eight addresses,
