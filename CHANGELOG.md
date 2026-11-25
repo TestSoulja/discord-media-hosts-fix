@@ -26,7 +26,8 @@ command, so the released archive is byte-identical to a local rebuild.
   block and rejected the whole file with `then was unexpected at this time`,
   exit 255 — a double-click did nothing. The parentheses are escaped (`^(` and
   `^)`), the message reads exactly as before, and `remove-pins.bat` needed no
-  change. The 1.10.0 archive in the release is replaced by 1.10.1.
+  change. 1.10.1 is published as the latest release in place of 1.10.0; the
+  1.10.0 page keeps its archive and now opens with a warning that points here.
 - Three execution checks now start the real `.bat` files through `cmd /c <nul>`:
   `-Version` prints the version and exits 0, and each `.bat` run without its
   `.ps1` names the missing file and exits 1. On the 1.10.0 entry point they fail

@@ -23,6 +23,16 @@ and the release checks.
    was fine before 1.10.0", this check is the first suspect: the probe records
    the code, so the report names it.
 
+## Testing
+
+1. **The entry-point checks start only two paths.** The suite runs the real
+   `.bat` files through `cmd` for `-Version` and for the missing-`.ps1` message,
+   which is what catches a parse error before anything else can. The elevated
+   double-click run, the VPN-menu branch and the `remove-pins` confirmation are
+   not driven through a real console; the VPN flag is still asserted statically.
+   A second broken-entry-point report would decide whether to add a console
+   driver for those paths.
+
 ## Documentation
 
 The antivirus documentation gaps (Russian safety list, quarantined `.ps1`, the
