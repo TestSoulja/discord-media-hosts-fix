@@ -113,7 +113,7 @@ param(
 )
 
 # Single source of truth for the version. Keep in sync with CHANGELOG.md.
-$AppVersion = '1.9.1'
+$AppVersion = '1.10.0'
 
 $ErrorActionPreference = 'Stop'
 
@@ -478,6 +478,77 @@ function Get-TextWithoutPin {
     return [regex]::Replace($Text, $pattern, '')
 }
 
+# The one place that talks to curl. Every call site goes through it, so the test
+# suite can stand in for the network without touching the invocation code.
+function Invoke-CurlRaw {
+    param([string[]]$CurlArgs)
+
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        return @(& $curlPath @CurlArgs 2>$null | ForEach-Object { [string]$_ })
+    }
+    finally {
+        $ErrorActionPreference = $saved
+    }
+}
+
+# curl 7.66+ can run a whole list of transfers in one process. Windows 10 1803-
+# 1909 ship older builds, so the answer decides how the sweep probes, not
+# whether it works.
+function Test-CurlParallel {
+    if (-not (Test-Path -LiteralPath $curlPath)) { return $false }
+    $line = ''
+    $lines = @(Invoke-CurlRaw -CurlArgs @('--version'))
+    if ($lines.Count -gt 0) { $line = $lines[0] }
+    if ($line -notmatch 'curl\s+(\d+)\.(\d+)') { return $false }
+    $major = [int]$Matches[1]
+    $minor = [int]$Matches[2]
+    return ($major -gt 7 -or ($major -eq 7 -and $minor -ge 66))
+}
+
+# Probes many addresses in one curl process and returns @{ ip = state } where
+# state is ok / tls / odd / dead. Each request is tagged with ?probe=<ip>, so a
+# transfer that never connected can still be attributed: curl's write-out prints
+# the URL it belongs to. No exit code is read - with several transfers it belongs
+# to the last one only, and the times carry the same information.
+function Get-ProbeBatch {
+    param(
+        [string[]]$Addresses,
+        [string]$HostName = 'media.discordapp.net',
+        [int]$Port = 443,
+        [int]$TimeoutSec = 6,
+        [int]$MaxParallel = 8
+    )
+
+    $states = @{}
+    if (-not $Addresses -or $Addresses.Count -eq 0) { return $states }
+    if (-not (Test-CurlParallel)) { return $states }
+
+    $curlArgs = @('-s', '--parallel', '--parallel-max', "$MaxParallel", '-m', "$TimeoutSec",
+                  '-w', '%{http_code} %{time_connect} %{time_appconnect} %{url_effective}' + "`n")
+    foreach ($ip in $Addresses) {
+        $curlArgs += @('-o', 'NUL',
+                       '--resolve', "${HostName}:${Port}:$ip",
+                       ("https://{0}:{1}/?probe={2}" -f $HostName, $Port, $ip))
+    }
+
+    foreach ($line in @(Invoke-CurlRaw -CurlArgs $curlArgs)) {
+        # http_code connect_time appconnect_time url
+        if ($line -notmatch '^(\d{3}) (\d+\.?\d*) (\d+\.?\d*) .*\?probe=([0-9.]+)') { continue }
+        $code = $Matches[1]
+        $connect = [double]$Matches[2]
+        $appconnect = [double]$Matches[3]
+        $ip = $Matches[4]
+
+        if ($connect -le 0) { $states[$ip] = 'dead' }
+        elseif ($appconnect -le 0) { $states[$ip] = 'tls' }
+        elseif ($code -match '^[1-5]\d\d$') { $states[$ip] = 'ok' }
+        else { $states[$ip] = 'odd' }
+    }
+    return $states
+}
+
 # One HTTPS request that keeps the reason it failed. curl's exit code is the only
 # thing that separates "nobody listens" (7) from "the connection is dropped" (28)
 # from "TCP is fine, TLS is killed" (35/56) - and to the person reading the
@@ -499,8 +570,10 @@ function Get-HttpsProbe {
         if ($ResolveTo) { $curlArgs += @('--resolve', "${HostName}:${Port}:$ResolveTo") }
         $curlArgs += ("https://{0}:{1}/" -f $HostName, $Port)
 
-        $code = [string](& $curlPath @curlArgs 2>$null)
+        $lines = @(Invoke-CurlRaw -CurlArgs $curlArgs)
         $exit = $LASTEXITCODE
+        $code = ''
+        if ($lines.Count -gt 0) { $code = $lines[-1] }
 
         if ($exit -eq 0) {
             if ($code -match '^[1-5]\d\d$') { return @{ State = 'ok'; Http = $code; Exit = 0 } }
@@ -560,6 +633,29 @@ function Test-MediaAlive {
     return $false
 }
 
+# Addresses the resolver hands out right now. Usually they are the dead set that
+# made the person run this at all, but "usually" is not "always": on a network
+# where the pins rotated, the fresh answer holds a working address that the
+# hardcoded range does not.
+function Get-DnsAddresses {
+    param([string[]]$Names = @('media.discordapp.net'), [int]$Max = 12)
+
+    $found = New-Object System.Collections.Generic.List[string]
+    foreach ($name in $Names) {
+        try {
+            foreach ($answer in [System.Net.Dns]::GetHostAddresses($name)) {
+                if ($answer.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { continue }
+                $ip = $answer.IPAddressToString
+                if (-not $found.Contains($ip) -and $found.Count -lt $Max) { $found.Add($ip) }
+            }
+        }
+        catch {
+            # No resolver answer is not an error: the range below still stands.
+        }
+    }
+    return @($found)
+}
+
 # Control probe: does Discord work at all through the current bypass?
 # Returns ok / fail, or dns when the name itself does not resolve (then the
 # answer says nothing about the bypass, so no conclusion is drawn from it).
@@ -571,7 +667,9 @@ function Test-ControlHost {
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $code = & $curlPath @('-s', '-o', 'NUL', '-m', "$TimeoutSec", '-w', '%{http_code}', "https://$HostName/") 2>$null
+        $lines = @(Invoke-CurlRaw -CurlArgs @('-s', '-o', 'NUL', '-m', "$TimeoutSec", '-w', '%{http_code}', "https://$HostName/"))
+        $code = ''
+        if ($lines.Count -gt 0) { $code = $lines[-1] }
         if ($LASTEXITCODE -eq 5 -or $LASTEXITCODE -eq 6) { return 'dns' }
         if ($LASTEXITCODE -ne 0) { return 'fail' }
         if ($code -match '^[1-5]\d\d$') { return 'ok' }
@@ -691,23 +789,46 @@ function Test-PinBlock {
     return $true
 }
 
-# Probes candidate addresses and keeps the ones that answer. Bounded in time:
-# at most $Limit addresses, each with its own timeout.
+# Probes candidate addresses and keeps the ones that answer. The whole list goes
+# through one curl process when the build supports --parallel; otherwise the
+# fallback probes one at a time, bounded by $Limit. Either way it stops as soon
+# as $Wanted addresses answer - a minority profile must not be read as "dead".
 function Get-AliveAddresses {
     param(
         [string[]]$Candidates,
         [string]$HostName = 'media.discordapp.net',
-        [int]$Limit = 10,
+        [int]$Limit = 64,
         [int]$TimeoutSec = 6,
         [int]$Wanted = 4
     )
 
     $alive = New-Object System.Collections.Generic.List[string]
-    $tried = 0
+    $queue = @($Candidates | Where-Object { $_ } | Select-Object -Unique)
+    if ($queue.Count -eq 0) { return @() }
+    # Without curl there is nothing to probe: one reason is printed by the caller,
+    # not one "skipped" line per candidate.
+    if (-not (Test-Path -LiteralPath $curlPath)) { return @() }
 
-    foreach ($ip in $Candidates) {
-        if ($alive.Count -ge $Wanted -or $tried -ge $Limit) { break }
-        $tried++
+    $batch = Get-ProbeBatch -Addresses $queue -HostName $HostName -TimeoutSec $TimeoutSec
+    $silent = 0
+    $oneByOne = 0
+
+    foreach ($ip in $queue) {
+        if ($alive.Count -ge $Wanted) { break }
+
+        if ($batch.ContainsKey($ip)) {
+            if ($batch[$ip] -eq 'ok') {
+                $alive.Add($ip)
+                Write-Step "  $ip  answers" 'Green'
+            }
+            else {
+                $silent++
+            }
+            continue
+        }
+
+        if ($oneByOne -ge $Limit) { break }
+        $oneByOne++
 
         $result = Test-MediaEndpoint -ResolveTo $ip -HostName $HostName -TimeoutSec $TimeoutSec
         if ($result -eq 'ok') {
@@ -715,11 +836,17 @@ function Get-AliveAddresses {
             Write-Step "  $ip  answers" 'Green'
         }
         elseif ($result -eq 'dead') {
-            Write-Step "  $ip  no answer" 'DarkGray'
+            $silent++
         }
         else {
             Write-Step "  $ip  skipped (no curl.exe)" 'DarkGray'
         }
+    }
+
+    # One line instead of one per dead address: a wide sweep would otherwise fill
+    # the window with forty lines nobody reads.
+    if ($silent -gt 0) {
+        Write-Step ("  {0} addresses did not answer" -f $silent) 'DarkGray'
     }
     return @($alive)
 }
@@ -1215,19 +1342,22 @@ if ($needFix) {
     Write-Step ''
     Write-Step 'Probing Cloudflare addresses for the Discord CDN...' 'Gray'
 
-    $candidates = @($ExtraIPs) + @($preferred)
+    $candidates = @($ExtraIPs) + @($preferred) + @(Get-DnsAddresses -Names @('media.discordapp.net'))
     $candidates += foreach ($last in 232, 233) {
         foreach ($n in 128..141) { "162.159.$n.$last" }
     }
     $candidates = @($candidates | Where-Object { $_ } | Select-Object -Unique)
 
-    $alive = @(Get-AliveAddresses -Candidates $candidates -HostName 'media.discordapp.net' -Limit 8 -TimeoutSec 6)
+    $alive = @(Get-AliveAddresses -Candidates $candidates -HostName 'media.discordapp.net' -TimeoutSec 6)
 
     if ($alive.Count -eq 0 -and (Test-Path -LiteralPath $curlPath)) {
+        # A short timeout and a thin line look identical from here, so the first
+        # dozen get a second chance with twice the wait before the range is
+        # declared dead.
         Write-Step ''
         Write-Step 'Nothing yet - trying again with a longer wait (slow connections need it).' 'Gray'
-        $retry = @($candidates | Select-Object -First 4)
-        $alive = @(Get-AliveAddresses -Candidates $retry -HostName 'media.discordapp.net' -Limit 4 -TimeoutSec 12 -Wanted 2)
+        $retry = @($candidates | Select-Object -First 12)
+        $alive = @(Get-AliveAddresses -Candidates $retry -HostName 'media.discordapp.net' -TimeoutSec 12 -Wanted 4)
     }
 
     if ($alive.Count -eq 0 -and (Test-Path -LiteralPath $curlPath)) {
@@ -1416,6 +1546,33 @@ if ($needFix) {
                 Write-Step 'so the fix cannot stay. Allow the change and run this file again.' 'Yellow'
                 Write-Step ("Backup of the file before the write: {0}" -f $backup) 'Gray'
                 exit 1
+            }
+
+            # The check above proves the text landed. This proves the name, through
+            # hosts, reaches a node that serves it. 403/421 means a node answered
+            # but refused this host - pinning it is "fixed" with broken images.
+            if ($isSystemFile -and -not $DryRun -and (Test-Path -LiteralPath $curlPath)) {
+                $unserved = @()
+                foreach ($name in $Hosts) {
+                    $probe = Get-HttpsProbe -HostName $name -TimeoutSec 8
+                    if ($probe.State -eq 'ok' -and @('403', '421') -notcontains $probe.Http) { continue }
+                    $why = 'no answer'
+                    if ($probe.State -eq 'ok') { $why = "refused this host (HTTP $($probe.Http))" }
+                    $unserved += ("{0} ({1})" -f $name, $why)
+                }
+
+                if ($unserved.Count -gt 0) {
+                    Write-Step ''
+                    Write-Step 'The addresses are in hosts, but the names do not answer through them:' 'Red'
+                    foreach ($item in $unserved) { Write-Step ("  {0}" -f $item) 'Red' }
+                    Write-Step 'Pinning an address that does not serve the name would leave images' 'Yellow'
+                    Write-Step 'broken, so this run is not a success. Run this file again - the' 'Yellow'
+                    Write-Step 'addresses rotate - and if it repeats, the pins are not on the path:' 'Yellow'
+                    Write-Step 'check that the VPN is off and the bypass is running.' 'Yellow'
+                    Write-Step ("Backup of the file before the write: {0}" -f $backup) 'Gray'
+                    Write-Step 'Undo: remove-pins.bat' 'Gray'
+                    exit 1
+                }
             }
 
             Write-Step "Address list updated. Backup: $backup" 'Green'

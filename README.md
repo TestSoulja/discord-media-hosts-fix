@@ -6,7 +6,7 @@ The script checks that no VPN is carrying the traffic, starts your zapret config
 
 > **This is a one-time fix.** Run it once and you are done. After that, start zapret the way you always did — `general.bat`, `service.bat` or your shortcut — and open Discord normally. Run this file again only if images break again. It is **not** a Discord launcher and **not** an everyday step. The full explanation is in [Everyday use](#everyday-use--this-file-is-not-a-discord-launcher).
 
-**Version 1.9.1** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
+**Version 1.10.0** · [Changelog](CHANGELOG.md) · [Releases](https://github.com/TestSoulja/discord-media-hosts-fix/releases)
 
 * [Русское описание — ниже](#русский)
 
@@ -119,11 +119,11 @@ The only thing that works is a **different destination address** that serves the
 4. Checks four seed addresses of `media.discordapp.net` through the bypass. If they answer, that config stays.
 5. If they do not, asks a control question — does `discord.com` load through this bypass at all — and names which of the two it is: only the media hosts are cut, or the bypass is not beating the DPI. Then stops the bypass and starts the next config and repeats, through every config found in the folder. When even TCP 443 does not connect, no desync can help and the switching stops.
 6. Checks the three Discord media hosts. If all answer, `hosts` is left alone — that is the normal second and later run.
-7. Otherwise probes Cloudflare edge addresses: 8 fast tries, then 4 slow retries with a longer timeout, keeping up to 4 that answer.
-8. Writes them into `hosts`, once per hostname — 12 lines in a marked block.
+7. Probes the whole known Cloudflare range for the Discord CDN in parallel, plus whatever the resolver hands out for `media.discordapp.net`, and keeps the addresses that answer. A network where only a few of them answer still ends with pins. If nothing answers, the first dozen are retried with twice the timeout. Worst case is about a minute with a current `curl`; a build older than 7.66 probes one address at a time and takes longer.
+8. Writes them into `hosts`, one line per hostname per address — 12 lines when four addresses answer. After the write, every pinned name is requested through `hosts`: a run reports success only when the name really resolves and the node serves it.
 9. Flushes the DNS cache. Restarts the Discord client that was running (Stable / PTB / Canary / Development) when `hosts` changed or the bypass was started/replaced; a client that was not running is never launched. `-RestartDiscord` forces the restart, `-NoRestart` turns it off.
 
-If no address answers, nothing is written and the script exits with code `2` — after naming the real cause: by name (Discord works, only the media hosts are cut), by config (even `discord.com` fails through the bypass) or by address (TCP 443 never connects). When nothing connects at all, it also checks whether only port 443 is cut, the addresses themselves are dropped, the TLS handshake is killed, or the machine itself refuses — four different situations with four different answers. Every `hosts` write is read back and verified: if a security product restores the old file, the script says so and exits with code `1` instead of reporting success. It never pins a dead address, and it never edits zapret's configs, lists or `service.bat`. A zapret installed as a Windows service is never killed and replaced.
+If no address answers, nothing is written and the script exits with code `2` — after naming the real cause: by name (Discord works, only the media hosts are cut), by config (even `discord.com` fails through the bypass) or by address (TCP 443 never connects). When nothing connects at all, it also checks whether only port 443 is cut, the addresses themselves are dropped, the TLS handshake is killed, or the machine itself refuses — four different situations with four different answers. Every `hosts` write is read back and verified, and every pinned name is then requested through `hosts`: if a security product restores the old file, or the pinned node refuses the name, the script says so and exits with code `1` instead of reporting success. It never pins a dead address, and it never edits zapret's configs, lists or `service.bat`. A zapret installed as a Windows service is never killed and replaced.
 
 ## Requirements
 
@@ -241,8 +241,9 @@ Safety details:
 - the existing file is backed up as `hosts.bak-YYYYMMDD-HHmmss` before every write (the last 5 backups are kept);
 - the read-only attribute and the file encoding (ANSI or UTF-8 with BOM) are preserved;
 - re-running is idempotent: an old block is replaced, other entries are untouched;
+- the write is verified twice: the text is read back, then every pinned hostname is requested through `hosts`. A node that answers `403`/`421` or does not answer at all is reported and the run exits with code `1`, so "updated" never means "pinned something that cannot work";
 - no changes to DNS settings, firewall, proxy, routing or the registry;
-- nothing about the antivirus or firewall is changed either: no exclusions, no settings, no reading of its logs. The script only looks at the certificate a site presents and reports what it sees;
+- nothing about the antivirus or firewall is changed either: no exclusions, no settings, no reading of its logs. The script only looks at the certificate a site presents and reports what it sees. It deliberately does not ask Windows for the antivirus state (`SecurityCenter2`): on a machine where the product had already been removed, that query once returned two ghost Kaspersky entries, and a report built on it would have lied;
 - zapret itself is not modified — the script only starts the config you already have;
 - other sites, LAN names and `cdn.discordapp.com` are not affected;
 - it is a one-shot run: **no service, no scheduled task, no autostart entry, no background process**. When the script exits, nothing of it keeps running, so it cannot reset, restart or re-pin anything on its own later;
@@ -274,7 +275,7 @@ Safety details:
 - *"The machine refused the connection itself"* — a local firewall or an antivirus blocks `curl.exe` or the port. Allow `curl.exe` and PowerShell in the firewall, check the antivirus log, then run the file again.
 - *"None of them accepted a connection at all"* — the addresses themselves are dropped or slowed to a standstill. No config helps; the way out is a tunnel for Discord only (VPN with split tunneling) or a proxy.
 
-If something local inspects HTTPS, the report adds a line: *"HTTPS here is signed by CN=Kaspersky Anti-Virus Personal Root Certificate"* means an antivirus or proxy is decrypting the connection, and its own certificate can break the handshake to the media hosts. Turn its HTTPS scanning off for a test — no address change can cure that.
+If something local inspects HTTPS, the report adds a line: *"HTTPS here is signed by CN=Kaspersky Anti-Virus Personal Root Certificate"* means an antivirus or proxy is decrypting the connection, and its own certificate can break the handshake to the media hosts. Turn its HTTPS scanning off for a test — no address change can cure that. That line can only appear when a site actually answers over HTTPS (`discord.com`, `example.com`); if HTTPS is blocked completely, there is no certificate to name and the line is absent.
 
 In every case `hosts` is left unchanged on purpose: no dead address is pinned. The gray `Details:` line keeps the technical fact, useful when you report the problem.
 
@@ -282,7 +283,11 @@ In every case `hosts` is left unchanged on purpose: no dead address is pinned. T
 
 **"The address list disappeared right after it was written"** — something protects the `hosts` file and restored it (an antivirus, or Defender *Controlled folder access*). The fix cannot stay that way; allow the change and run the file again. Exit code `1`.
 
-**"winws.exe did not appear … The file itself is gone"** — an antivirus deleted the binary. Restore the zapret bundle or allow its folder, then run the file again.
+**"The addresses are in hosts, but the names do not answer through them"** — the pins landed, but the nodes behind them do not serve the Discord media host: a `403`/`421` means the node answered and refused the name, "no answer" means it said nothing at all. The block stays in `hosts` (undo with `remove-pins.bat`), but the run is not a success and exits with code `1`, because images would stay broken. Run the file again — addresses rotate; if it repeats, the pins are not on the path: check that the VPN is off and the bypass is running.
+
+**"fix-discord-media.ps1 is missing next to this file"** — the archive was unpacked without it, or an antivirus quarantined the script after unpacking. Restore it from quarantine (or unpack the archive again) and run the `.bat` again; the `.bat` alone cannot do anything.
+
+**"winws.exe did not appear … The file itself is gone"** — an antivirus deleted the binary. Restore the zapret bundle or allow its folder, then run the file again. If `winws.exe` is still there but the bypass never starts, an antivirus may be blocking the WinDivert driver it loads. The script cannot see that directly: it only sees that `winws.exe` did not appear or that connections are refused. Check the antivirus log for a blocked driver, allow it, and run the file again.
 
 **"Could not write hosts"** — usually Microsoft Defender *Controlled folder access*. Allow the change for a minute, or add `powershell.exe` as an allowed app.
 
@@ -303,7 +308,7 @@ This is a versioned project, not a loose set of scripts.
 - Release checklist: bump `$AppVersion` → update the version line in README → add a CHANGELOG entry → commit → tag `v<version>` → push the tag.
 - Manual fallback: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<version>`, then upload `dist/discord-media-hosts-fix.zip` and `dist/SHA256SUMS` to the release.
 
-The current release is **v1.9.1**.
+The current release is **v1.10.0**.
 
 ## License
 
@@ -315,7 +320,7 @@ MIT. Do whatever you want, no warranty. See [LICENSE](LICENSE).
 
 Однокликовый фикс для случая, когда **zapret уже запущен, а картинки в Discord всё равно не грузятся** — «Не удалось загрузить изображение», пустые аватарки, нет стикеров, эмодзи и вложений, при этом текст и голос работают.
 
-Скрипт проверяет, что трафик не уходит в VPN, поднимает ваш конфиг zapret (если `winws.exe` не запущен), при необходимости сам перезапускает его со следующим конфигом — перебирая все найденные в папке конфиги, пока один не заработает, — проверяет адреса Cloudflare, которые обслуживают медиа-CDN Discord, оставляет только те, что реально отвечают, и прописывает их в `hosts` Windows — в отдельном помеченном блоке. Потом перезапускает Discord, если ему есть что подхватить: изменились адреса или обход был запущен/сменён при уже открытом клиенте.
+Скрипт проверяет, что трафик не уходит в VPN, поднимает ваш конфиг zapret (если `winws.exe` не запущен), при необходимости сам перезапускает его со следующим конфигом — перебирая все найденные в папке конфиги, пока один не заработает, — параллельно проверяет весь известный диапазон Cloudflare для медиа-CDN Discord и то, что резолвер сейчас выдаёт для `media.discordapp.net`, оставляет только те адреса, что реально отвечают, прописывает их в `hosts` Windows — в отдельном помеченном блоке — и проверяет каждое имя через записанные адреса. Потом перезапускает Discord, если ему есть что подхватить: изменились адреса или обход был запущен/сменён при уже открытом клиенте.
 
 > **Это одноразовый фикс.** Запустить нужно один раз — и всё. Дальше запускайте zapret как раньше (`general.bat`, `service.bat` или ярлык) и открывайте Discord как обычно. Этот файл нужен снова только если картинки опять отвалились. Он **не** запускает Discord и **не** является ежедневным шагом. Подробнее — ниже, в разделе «Каждый день».
 
@@ -350,7 +355,7 @@ D:\zapret\
 **3. Запуск:** двойной клик по `fix-discord-media.bat`.
 
 1. Windows спросит права администратора — **Да**.
-2. Подождите 10–60 секунд: скрипт запустит zapret, проверит медиа-CDN и сам переключится на другой конфиг, если через первый ничего не проходит. Вопросов не задаёт — единственное исключение: выбор при включённом VPN (см. ниже).
+2. Подождите 10–60 секунд (если `curl.exe` старше 7.66, проверка идёт по одному адресу и занимает дольше): скрипт запустит zapret, проверит медиа-CDN и сам переключится на другой конфиг, если через первый ничего не проходит. Вопросов не задаёт — единственное исключение: выбор при включённом VPN (см. ниже).
 3. Discord перезапустится сам, если пины изменились или обход был запущен/сменён при уже открытом клиенте. Картинки загрузятся.
 
 **Это и была одноразовая часть.** Закреплённые адреса остаются в `hosts` после перезагрузок. Дальше запускайте zapret как раньше — `general.bat`, `service.bat` или ярлыком — и открывайте Discord как обычно. Этот файл нужен снова только если картинки опять отвалились: он заново проверит адреса и перепишет блок. Свёрнутое окно zapret не закрывайте: закрыли — обход выключился.
@@ -499,12 +504,13 @@ This one works - keeping it.
 # <<< discord-media-pin (auto) <<<
 ```
 
-Перед каждой записью делается `hosts.bak-дата-время` (хранятся 5 последних), атрибут «только чтение» и кодировка файла сохраняются, повторный запуск заменяет блок, а не дублирует.
+Перед каждой записью делается `hosts.bak-дата-время` (хранятся 5 последних), атрибут «только чтение» и кодировка файла сохраняются, повторный запуск заменяет блок, а не дублирует. Запись проверяется дважды: текст перечитывается, затем каждое привязанное имя запрашивается через `hosts`. Узел, который ответил `403`/`421` или не ответил вовсе, успехом не считается: скрипт называет имя и выходит с кодом `1`, чтобы «адреса обновлены» не означало «картинки по-прежнему битые».
 
 Что скрипт **не** делает:
 
 - не ставит службу, задачу в планировщике, автозапуск или фоновый процесс — после выхода из скрипта от него ничего не остаётся в памяти и в системе, поэтому сам по себе он никогда не перезапустит Discord, не перепишет адреса и не «сбросит» настройку;
 - не трогает DNS, фаервол, прокси, маршруты и реестр, не меняет конфиги zapret и `service.bat`;
+- не трогает антивирус: ни исключений, ни настроек, ни журналов, ни состояния защиты — скрипт смотрит только сертификат, который показывает сайт, и пишет то, что увидел. Состояние антивируса он намеренно не запрашивает (`SecurityCenter2`): на машине, где продукт уже удалён, такой запрос однажды вернул два «призрачных» Kaspersky — отчёт на его основе врал бы;
 - не затрагивает другие сайты, имена в локальной сети и `cdn.discordapp.com`;
 - не запускает Discord, если он был закрыт: клиент перезапускается не более одного раза за прогон и только если уже работал;
 - не пишет ничего, кроме `hosts` (и его бэкапов) и `%LOCALAPPDATA%\discord-media-hosts-fix\last-config.txt`; последний читается только при следующем ручном запуске.
@@ -533,7 +539,9 @@ This one works - keeping it.
   Во всех случаях `hosts` намеренно не меняется: мёртвые адреса не пишутся. Техническая деталь осталась в серой строке `Details:` — её удобно приложить, если сообщаете о проблеме.
 - **«curl.exe was not found»** — проверить адреса нечем, поэтому ничего не пишется и скрипт выходит с кодом `2` (`curl.exe` есть в Windows 10 1803+ и Windows 11; его может скрывать защита). Обновите Windows, разрешите `curl.exe` либо запустите с `-Force`, понимая, что список не проверен.
 - **«The address list disappeared right after it was written»** — что-то защищает `hosts` и вернуло файл обратно (антивирус или Defender *Controlled folder access*). Так фикс не удержится: разрешите изменение и запустите снова. Код выхода `1`.
-- **«winws.exe did not appear … The file itself is gone»** — антивирус удалил бинарник. Восстановите бандл zapret или разрешите его папку, затем запустите снова.
+- **«The addresses are in hosts, but the names do not answer through them»** — блок записан, но узлы за этими адресами не обслуживают медиа-хост Discord: `403`/`421` значит «узел ответил и отказал имени», «no answer» — «не ответил вовсе». Блок остаётся в `hosts` (снять — `remove-pins.bat`), но прогон успехом не считается и выходит с кодом `1`: картинки были бы битыми. Запустите файл ещё раз — адреса меняются; если повторяется, значит записанные адреса не на пути: проверьте, что VPN выключен и обход запущен.
+- **«fix-discord-media.ps1 is missing next to this file»** — архив распаковали без него или антивирус унёс скрипт в карантин после распаковки. Восстановите файл из карантина (или распакуйте архив заново) и запустите `.bat` снова: один `.bat` ничего не сделает.
+- **«winws.exe did not appear … The file itself is gone»** — антивирус удалил бинарник. Восстановите бандл zapret или разрешите его папку, затем запустите снова. Если `winws.exe` на месте, а обход так и не стартует, антивирус может блокировать драйвер WinDivert, который тот загружает. Напрямую скрипт этого не видит: он видит только, что `winws.exe` не появился или что соединения отвергаются. Посмотрите в логе антивируса блокировку драйвера, разрешите её и запустите файл снова.
 - **«All Discord media hosts answer — the pins are fine, hosts left as is»** — скрипт проверил все три хоста через работающий обход, каждый ответил, поэтому `hosts` он намеренно не трогал. Это нормальное состояние при втором и последующих запусках. Если в Discord картинки всё равно битые — закройте его полностью (включая иконку в трее) и откройте снова: работающий клиент держит старые адреса до перезапуска. Перепроверить и перепинить принудительно — запуск с `-Force`. При включённом VPN эта проверка тоже может пройти, хотя Discord будет ломаться. Если клиент открыт, скрипт теперь называет его и предлагает `-RestartDiscord` — перезапустит сам.
 - **«Could not write hosts»** — чаще всего Defender *Controlled folder access*: разрешите изменение на минуту.
 - **Блок записался, но картинок нет** — полностью закройте Discord (включая иконку в трее) и откройте снова либо запустите файл с `-RestartDiscord`.
@@ -551,4 +559,4 @@ This one works - keeping it.
 - Порядок выпуска: поднять `$AppVersion` → обновить строку версии в README → добавить запись в CHANGELOG → коммит → тег `v<версия>` → пуш тега.
 - Запасной путь: `powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Tag v<версия>`, затем загрузить `dist/discord-media-hosts-fix.zip` и `dist/SHA256SUMS` в релиз.
 
-Текущий релиз — **v1.9.1**.
+Текущий релиз — **v1.10.0**.

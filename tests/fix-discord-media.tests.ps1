@@ -24,6 +24,51 @@ function Check {
     }
 }
 
+# A scripted network: every address in __ALIVE__ answers, everything else times
+# out, and a request that does not name an address (the post-write check through
+# hosts) answers __THROUGH__. Both call shapes are supported - the single-URL one
+# and the --parallel batch - so the real probing code runs unmodified.
+$fakeCurl = @'
+function Invoke-CurlRaw {
+    param([string[]]$CurlArgs)
+    $all = ($CurlArgs -join ' ')
+    $alive = @(__ALIVE__)
+    $global:LASTEXITCODE = 0
+    if ($all -match '--version') { return @('curl 8.22.0 (Windows) libcurl/8.22.0') }
+
+    $ips = @([regex]::Matches($all, 'probe=([0-9.]+)') | ForEach-Object { $_.Groups[1].Value })
+    if ($ips.Count -eq 0) {
+        $m = [regex]::Match($all, ':443:([0-9.]+)')
+        if ($m.Success) { $ips = @($m.Groups[1].Value) }
+    }
+
+    if ($all -match '--parallel') {
+        $lines = @()
+        $ok = 0
+        foreach ($ip in $ips) {
+            if ($alive -contains $ip) {
+                $ok++
+                $lines += "200 0.010 0.040 https://media.discordapp.net/?probe=$ip"
+            }
+            else {
+                $lines += "000 0.000000 0.000000 https://media.discordapp.net/?probe=$ip"
+            }
+        }
+        if ($ok -eq 0) { $global:LASTEXITCODE = 28 }
+        return $lines
+    }
+
+    if ($ips.Count -eq 0) {
+        if ('__THROUGH__' -eq '000') { $global:LASTEXITCODE = 28 }
+        return @('__THROUGH__')
+    }
+
+    if ($alive -contains $ips[0]) { $global:LASTEXITCODE = 0; return @('200') }
+    $global:LASTEXITCODE = 28
+    return @('000')
+}
+'@
+
 function New-Variant {
     param(
         [string]$Name,
@@ -38,7 +83,13 @@ function New-Variant {
         [switch]$RevertHosts,
         [switch]$FastWinwsWait,
         [switch]$NoWinws,
-        [string]$ExtraStubs = ''
+        [string]$ExtraStubs = '',
+        [switch]$FakeProbes,
+        [switch]$NoParallel,
+        [switch]$RealProbes,
+        [string[]]$AliveIps = @(),
+        [string]$ThroughCode = '200',
+        [string[]]$DnsIps = @()
     )
 
     $code = $src
@@ -92,6 +143,9 @@ function Get-VpnAdapters { return @() }
 function Get-PortVerdict { param([string[]]`$Addresses, [string]`$HostName = 'media.discordapp.net', [int]`$TimeoutSec = 5) return @{ Kind = 'ip'; Port = 0; Ip = ''; Detail = '' } }
 function Get-TlsIssuer { param([string]`$HostName = 'discord.com', [int]`$Port = 443, [int]`$TimeoutMs = 6000) return '' }
 function Get-TlsInterceptor { param([string[]]`$HostNames = @('discord.com','example.com')) return `$null }
+function Invoke-CurlRaw { param([string[]]`$CurlArgs) `$global:LASTEXITCODE = 0; return @('200') }
+function Test-CurlParallel { return `$true }
+function Get-DnsAddresses { param([string[]]`$Names = @('media.discordapp.net'), [int]`$Max = 12) return @() }
 "@
     if ($AliveStub) {
         $stubs += @"
@@ -130,6 +184,17 @@ function Get-HostsText { param([string]$Path)
 '@
     }
     if ($ExtraStubs) { $stubs += "`r`n" + $ExtraStubs }
+    if ($FakeProbes) {
+        $aliveList = (@($AliveIps | ForEach-Object { "'$_'" }) -join ',')
+        $stubs += "`r`n" + $fakeCurl.Replace('__ALIVE__', $aliveList).Replace('__THROUGH__', $ThroughCode)
+    }
+    if ($NoParallel) {
+        $stubs += "`r`n" + 'function Test-CurlParallel { return $false }'
+    }
+    if ($DnsIps.Count -gt 0) {
+        $dnsList = (@($DnsIps | ForEach-Object { "'$_'" }) -join ',')
+        $stubs += "`r`n" + ('function Get-DnsAddresses {{ param([string[]]$Names = @(), [int]$Max = 12) return @({0}) }}' -f $dnsList)
+    }
     if ($NoWinws) {
         # A zapret folder that passes the folder check but whose binary never
         # starts: what an antivirus leaving the folder intact looks like.
@@ -147,10 +212,13 @@ function Start-Process { param([string]`$FilePath, [string]`$WorkingDirectory, `
         'Test-MediaEndpoint', 'Get-RunningDiscordClient', 'Start-Discord',
         'Test-ControlHost', 'Stop-Winws', 'Get-VpnDefaultRoute', 'Get-VpnAdapters',
         'Get-AliveAddresses', 'Get-BlockDiagnosis',
-        'Get-PortVerdict', 'Get-TlsIssuer', 'Get-TlsInterceptor'
+        'Get-PortVerdict', 'Get-TlsIssuer', 'Get-TlsInterceptor',
+        'Invoke-CurlRaw', 'Test-CurlParallel', 'Get-DnsAddresses'
     )
     if ($RevertHosts) { $stubTargets += 'Get-HostsText' }
     if ($NoWinws) { $stubTargets += 'Test-Winws' }
+    if ($RealProbes) { $stubTargets = @($stubTargets | Where-Object { $_ -ne 'Test-MediaEndpoint' }) }
+    if ($FakeProbes) { $stubTargets = @($stubTargets | Where-Object { $_ -ne 'Get-AliveAddresses' }) }
     foreach ($fn in $stubTargets) {
         $code = $code.Replace(('function {0} {{' -f $fn), ('function {0}-Real {{' -f $fn))
     }
@@ -246,6 +314,12 @@ foreach ($word in @('Add-MpPreference', 'Set-MpPreference', 'ExclusionPath')) {
 # people ended up forcing a run that could not work.
 Check 'static: the VPN stop is a choice, not a hidden flag hint' (-not $src.Contains('add -IgnoreVpn'))
 Check 'static: the VPN menu exists' ($src.Contains('Classic - stop here') -and $src.Contains('With the VPN on'))
+
+# One seam for the network: every curl call goes through Invoke-CurlRaw, so the
+# suite can script the network without touching the probing code.
+Check 'static: curl is invoked in exactly one place' `
+    (([regex]::Matches($src, '& \$curlPath')).Count -eq 1)
+Check 'static: the parallel batch needs curl 7.66' ($src.Contains('$minor -ge 66'))
 
 # ---------- version / conflict ----------
 $appVersion = [regex]::Match($src, '(?m)^\$AppVersion = ''([0-9]+\.[0-9]+\.[0-9]+)''').Groups[1].Value
@@ -437,6 +511,69 @@ Check 'vpn: that run still leaves hosts alone' ((File-Hash $hosts) -eq $before)
 $noZapret = New-Variant -Name 'no-zapret' -SystemFile -Media 'ok' -Runner '@()'
 $r = Invoke-Script $noZapret @('-HostsFile', $hosts, '-IgnoreVpn')
 Check 'zapret missing: explains and continues' ($r.Exit -eq 0 -and (Has $r 'No zapret folder next to this file') -and (Has $r 'pins are fine')) ("exit=$($r.Exit)")
+
+# ---------- sweep: a minority of the range answers ----------
+# The profile from the issue: most of the range times out, one address deep in
+# it answers. Before the widening the sweep stopped at probe eight, ran the
+# four-verdict diagnosis and told the person the addresses themselves were cut.
+$minority = New-Variant -Name 'sweep-minority' -SystemFile -FakeProbes -RealProbes `
+    -AliveIps @('162.159.140.232')
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $minority @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'sweep: one answering address deep in the range is pinned' `
+    ($r.Exit -eq 0 -and (Count-Lines $hosts '^162\.159\.140\.232 media\.discordapp\.net') -eq 1) `
+    ("exit=$($r.Exit)")
+Check 'sweep: a minority profile is not reported as a dead network' `
+    (-not (Has $r 'No address answered') -and -not (Has $r 'None of them accepted a connection'))
+
+$fallback = New-Variant -Name 'sweep-fallback' -SystemFile -FakeProbes -RealProbes -NoParallel `
+    -AliveIps @('162.159.140.232')
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $fallback @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'sweep: an old curl without --parallel still finds it' `
+    ($r.Exit -eq 0 -and (Count-Lines $hosts '^162\.159\.140\.232 media\.discordapp\.net') -eq 1) `
+    ("exit=$($r.Exit)")
+
+# ---------- candidates: the resolver is a source too ----------
+$dns = New-Variant -Name 'dns-candidates' -SystemFile -FakeProbes -RealProbes `
+    -AliveIps @('188.114.97.3') -DnsIps @('188.114.97.3')
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $dns @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'candidates: an address from the resolver is probed and pinned' `
+    ($r.Exit -eq 0 -and (Count-Lines $hosts '^188\.114\.97\.3 media\.discordapp\.net') -eq 1) `
+    ("exit=$($r.Exit)")
+
+# ---------- the pin must serve the name, not just answer ----------
+$refused = New-Variant -Name 'verify-421' -SystemFile -FakeProbes -RealProbes `
+    -AliveIps @('162.159.137.232') -ThroughCode '421'
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $refused @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'verify: a node that refuses the host is not called a success' `
+    ($r.Exit -eq 1 -and (Has $r 'do not answer through them')) ("exit=$($r.Exit)")
+Check 'verify: the refused run does not print the success line' (-not (Has $r 'Address list updated'))
+
+$dead = New-Variant -Name 'verify-dead' -SystemFile -FakeProbes -RealProbes `
+    -AliveIps @('162.159.137.232') -ThroughCode '000'
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $dead @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'verify: a pin nothing answers through is reported, not claimed' `
+    ($r.Exit -eq 1 -and (Has $r 'do not answer through them') -and (Has $r 'no answer')) ("exit=$($r.Exit)")
+
+$served = New-Variant -Name 'verify-ok' -SystemFile -FakeProbes -RealProbes `
+    -AliveIps @('162.159.137.232')
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $served @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'verify: a served name still ends in the success line' `
+    ($r.Exit -eq 0 -and (Has $r 'Address list updated')) ("exit=$($r.Exit)")
+
+# Without curl nothing can be checked through the names: the run says the list is
+# unverified (-Force) instead of calling every name dead.
+$noCurlWrite = New-Variant -Name 'verify-no-curl' -SystemFile -Media 'dead' -AliveEmpty -Runner '@()' -NoCurl
+New-HostsFile $hosts $plainHosts
+$r = Invoke-Script $noCurlWrite @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
+Check 'verify: without curl it does not pretend the names were checked' `
+    ($r.Exit -eq 0 -and (Has $r '-Force was passed') -and -not (Has $r 'do not answer through them')) `
+    ("exit=$($r.Exit)")
 
 # ---------- diagnostics: what exactly is blocked ----------
 $diagIp = New-Variant -Name 'diag-ip' -Media 'dead' -AliveEmpty -Runner '@()'

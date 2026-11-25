@@ -17,6 +17,33 @@ always contains exactly the three working files:
 The workflow builds it with the same Windows PowerShell as the documented local
 command, so the released archive is byte-identical to a local rebuild.
 
+## [1.10.0] - 2026-11-25
+
+The fix no longer gives up on a network where only a few addresses of the
+Discord CDN range answer — the profile where a manual `curl --resolve` loop
+shows a mix of success and `exit=28`.
+
+### Added
+
+- The sweep probes the whole known range instead of the first eight addresses,
+  in one `curl --parallel` process. A curl older than 7.66 falls back to one
+  process per address, so the fix still works on Windows 10 1803–1909; such a
+  run takes longer than the parallel one. Worst case is about a minute.
+- Resolver answers for `media.discordapp.net` are probed too, so an address
+  outside the hardcoded range can be used when the pins rotated.
+- After the write, every pinned name is requested through `hosts`. A node that
+  answers `403`/`421` refuses the host, and a name that does not answer at all
+  is a failure now: the run no longer prints "Address list updated" over a pin
+  that cannot work.
+
+### Changed
+
+- Dead addresses are reported as one summary line instead of one line each.
+- The Russian safety list names the antivirus and firewall, as the English one
+  already did; the `.bat` explains a `fix-discord-media.ps1` taken by an
+  antivirus; troubleshooting says when the HTTPS-interceptor line can appear
+  and that a blocked WinDivert driver is only visible indirectly.
+
 ## [1.9.1] - 2026-11-25
 
 ### Added
