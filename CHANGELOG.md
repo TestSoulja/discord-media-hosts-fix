@@ -31,19 +31,31 @@ shows a mix of success and `exit=28`.
   twice on a network where nothing answered: 57–58 s in total — 24 s for 28
   addresses in four waves of eight, 24 s for the 12-address retry at twice the
   timeout, 8 s for the diagnosis that follows. Without `--parallel` the same
-  range takes about five minutes, because the waves become one probe after
-  another.
-- The batch is read one record per address: a newline is no longer built into
-  the argument list (a real newline became a separate argument and broke `-w`),
-  and a line with two `?probe=` tags is refused instead of credited to the last
-  address in it. A batch that reports fewer addresses than it was given is
-  counted out loud, and the remainder is not retried one by one for minutes.
+  range takes just over five minutes (28 × 6 s + 12 × 12 s ≈ 312 s), because
+  the waves become one probe after another. That path says so on the console:
+  `this curl has no --parallel - checking one address at a time (slower)`.
 - Resolver answers for `media.discordapp.net` are probed too, so an address
   outside the hardcoded range can be used when the pins rotated.
 - After the write, every pinned name is requested through `hosts`. A node that
   answers `403`/`421` refuses the host, and a name that does not answer at all
   is a failure now: the run no longer prints "Address list updated" over a pin
   that cannot work.
+
+### Fixed
+
+- The parallel pass never produced usable output in 1.10.0 before its first
+  release. The record separator was built as ``'…%{url_effective}' + "`n"`` inside
+  an array literal, and PowerShell's comma binds tighter than `+`: the newline
+  became an argument of its own, `-w` lost it, every record was glued to the
+  next, and the greedy parser credited the whole line to the last address in
+  it. The rest of the list had no result and was probed one process per address,
+  which is where the twenty-minute runs came from. The format now carries a
+  literal `\n` that curl expands itself, the argument list is built without a
+  newline, and a line with two `?probe=` tags is refused instead of guessed.
+- When the parallel pass returns fewer records than it was given, the script
+  says `the parallel probe reported N of M addresses - at most six of the rest
+  are retried one by one` and probes no more than six of the missing addresses
+  singly, so a broken batch cannot turn into minutes of separate processes again.
 
 ### Changed
 

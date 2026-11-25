@@ -558,7 +558,7 @@ $partial = New-Variant -Name 'sweep-partial' -SystemFile -FakeProbes -RealProbes
 New-HostsFile $hosts $plainHosts
 $r = Invoke-Script $partial @('-NoZapret', '-HostsFile', $hosts, '-IgnoreVpn', '-Force')
 Check 'sweep: a batch that lost a record is counted out loud' `
-    ((Has $r 'the parallel probe reported') -and (Has $r 'the rest are not retried one by one')) `
+    ((Has $r 'the parallel probe reported') -and (Has $r 'at most six of the rest are retried one by one')) `
     (($r.Lines | Where-Object { $_ -match 'parallel probe' }) -join '; ')
 
 # ---------- candidates: the resolver is a source too ----------
@@ -635,6 +635,12 @@ if ($fnStart -ge 0 -and $fnEnd -gt $fnStart) { $fnText = $src.Substring($fnStart
 Check 'batch: the probe functions can be lifted for a live check' `
     ($fnText -match 'function Invoke-CurlRaw' -and $fnText -match 'function Test-CurlParallel' -and $fnText -match 'function Get-ProbeBatch')
 
+# Explicit precondition, not a skip: without curl there is nothing to check, and
+# a suite that quietly loses the live check is how the 1.10.0 defect survived.
+$curlExe = Join-Path $env:SystemRoot 'System32\curl.exe'
+Check 'batch: curl.exe is present for the live check' (Test-Path -LiteralPath $curlExe) `
+    ("curl.exe not found at {0} - the live batch check cannot run, so this run is red" -f $curlExe)
+
 $livePath = Join-Path $testRoot 'batch-live.ps1'
 $liveBody = @'
 $ErrorActionPreference = 'Stop'
@@ -642,18 +648,21 @@ $curlPath = '__CURL__'
 __FUNCS__
 $b = Get-ProbeBatch -Addresses @('127.0.0.1', '127.0.0.2') -Port 1 -TimeoutSec 3
 "keys=$($b.Keys.Count)"
-"one=$($b['127.0.0.1'])"
-"two=$($b['127.0.0.2'])"
+"one=[$($b['127.0.0.1'])]"
+"two=[$($b['127.0.0.2'])]"
 '@
-$liveBody = $liveBody.Replace('__CURL__', (Join-Path $env:SystemRoot 'System32\curl.exe')).Replace('__FUNCS__', $fnText)
+$liveBody = $liveBody.Replace('__CURL__', $curlExe).Replace('__FUNCS__', $fnText)
 Set-Content -LiteralPath $livePath -Value $liveBody -Encoding UTF8
 $live = Invoke-Script $livePath @()
+$liveText = ($live.Lines -join "`n")
+$liveDetail = (($live.Lines | Where-Object { $_ -match '^(keys|one|two)=' }) -join '; ')
+
+# The invariant is attribution, not the network: a refusal, a filtered port and a
+# proxy all answer differently, but every address must still get its own record.
 Check 'batch: real curl returns one line per address (2 of 2 keys)' `
-    ((Has $live 'keys=2') -and (Has $live 'one=dead') -and (Has $live 'two=dead')) `
-    (($live.Lines | Where-Object { $_ -match '^(keys|one|two)=' }) -join '; ')
+    ($liveText -match 'keys=2') $liveDetail
 Check 'batch: a silent address is attributed, not dropped' `
-    ((Has $live 'one=dead') -and (Has $live 'two=dead')) `
-    (($live.Lines | Where-Object { $_ -match '^(keys|one|two)=' }) -join '; ')
+    ($liveText -match 'one=\[(ok|dead|tls|odd)\]' -and $liveText -match 'two=\[(ok|dead|tls|odd)\]') $liveDetail
 
 # ---------- diagnostics: what exactly is blocked ----------
 $diagIp = New-Variant -Name 'diag-ip' -Media 'dead' -AliveEmpty -Runner '@()'

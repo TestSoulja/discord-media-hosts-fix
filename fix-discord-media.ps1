@@ -833,7 +833,7 @@ function Get-AliveAddresses {
     $fallbackLimit = $Limit
     if ($lost -gt 0 -and $batch.Count -gt 0) {
         $fallbackLimit = 6
-        Write-Step ("  the parallel probe reported {0} of {1} addresses - the rest are not retried one by one" -f $batch.Count, $queue.Count) 'Yellow'
+        Write-Step ("  the parallel probe reported {0} of {1} addresses - at most six of the rest are retried one by one" -f $batch.Count, $queue.Count) 'Yellow'
     }
     elseif ($lost -gt 0 -and $batch.Count -eq 0) {
         if (Test-CurlParallel) {
